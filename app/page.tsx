@@ -163,6 +163,7 @@ export default function Home() {
           loading={loading && !snapshot}
           expanded={summaryExpanded}
           onToggle={() => setSummaryExpanded((v) => !v)}
+          hasData={hasData}
         />
 
         <div className="px-6 mt-3">

@@ -52,7 +52,7 @@ Write like a chief strategy officer. Be specific. Name numbers. Name companies. 
 export async function generateSummary(
   snapshot: PulseSnapshot,
   profile?: BusinessProfile
-): Promise<string> {
+): Promise<string | undefined> {
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -260,6 +260,7 @@ export async function generateSummary(
     const textBlock = response.content.find((b) => b.type === "text");
     return textBlock?.text || "No summary generated.";
   } catch (err: any) {
-    return `Summary failed: ${err.message || String(err)}`;
+    console.error("AI Briefing error:", err.message || String(err));
+    return undefined;
   }
 }

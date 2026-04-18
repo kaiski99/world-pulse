@@ -5,6 +5,7 @@ interface SummaryPanelProps {
   loading: boolean;
   expanded: boolean;
   onToggle: () => void;
+  hasData?: boolean;
 }
 
 function renderMarkdown(text: string): string {
@@ -38,6 +39,7 @@ export default function SummaryPanel({
   loading,
   expanded,
   onToggle,
+  hasData,
 }: SummaryPanelProps) {
   return (
     <div className="mx-6 mt-4 rounded-lg bg-bg-surface border border-border-main border-l-4 border-l-accent-indigo overflow-hidden">
@@ -93,7 +95,9 @@ export default function SummaryPanel({
             />
           ) : (
             <p className="text-sm text-text-muted italic">
-              Click REFRESH to generate briefing
+              {hasData
+                ? "AI Briefing unavailable — add Anthropic API credits to enable"
+                : "Click REFRESH to generate briefing"}
             </p>
           )}
         </div>
