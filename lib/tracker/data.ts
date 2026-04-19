@@ -438,8 +438,34 @@ export async function fetchCryptoFlows(): Promise<CryptoFlows> {
 
   clearTimeout(timeout);
 
-  // Exchange reserves, CEX netflow, funding rates — require paid APIs (Glassnode/CoinGlass)
-  result.spotCexNetflow = degraded("flow-cex-netflow", "Spot CEX Netflow", "$", "coinglass");
+  // Nansen smart money netflows
+  try {
+    const { execSync } = require("child_process");
+    const nansenResult = execSync(
+      'nansen research smart-money netflow --chain ethereum --limit 10 --format csv 2>/dev/null',
+      { timeout: 15_000 }
+    ).toString();
+    const lines = nansenResult.trim().split("\n");
+    if (lines.length > 1) {
+      let totalNetflow24h = 0;
+      for (let i = 1; i < lines.length; i++) {
+        const cols = lines[i].split(",");
+        const nf24h = parseFloat(cols[3]) || 0; // net_flow_24h_usd
+        totalNetflow24h += nf24h;
+      }
+      result.spotCexNetflow = makePoint(
+        "flow-smart-money-netflow",
+        "Smart Money Netflow (ETH)",
+        totalNetflow24h,
+        "$",
+        "nansen",
+        "LIVE"
+      );
+    }
+  } catch {
+    result.spotCexNetflow = degraded("flow-cex-netflow", "Spot CEX Netflow", "$", "nansen");
+  }
+
   result.exchangeReserves = degraded("flow-exchange-reserves", "Exchange Reserves", "BTC", "glassnode");
   result.btcEtfFlow = degraded("flow-btc-etf", "BTC ETF Flow", "$", "farside");
   result.ethEtfFlow = degraded("flow-eth-etf", "ETH ETF Flow", "$", "farside");
