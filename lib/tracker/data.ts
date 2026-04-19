@@ -58,17 +58,27 @@ async function fetchFRED(
 ): Promise<{ value: number; prev: number } | null> {
   const apiKey = process.env.FRED_API_KEY;
   if (!apiKey) return null;
-  try {
-    const { execSync } = require("child_process");
-    const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=2`;
-    const result = execSync(`curl -s "${url}"`, { timeout: 15_000 });
-    const data = JSON.parse(result.toString());
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=2`;
+
+  function parseObs(data: any): { value: number; prev: number } | null {
     const obs = data?.observations;
     if (!obs || obs.length < 1) return null;
     const current = parseFloat(obs[0].value);
     const prev = obs.length > 1 ? parseFloat(obs[1].value) : current;
     if (isNaN(current)) return null;
     return { value: current, prev: isNaN(prev) ? current : prev };
+  }
+
+  // Try fetch first (works on Vercel), fall back to curl (works locally)
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) return parseObs(await res.json());
+  } catch {}
+
+  try {
+    const { execSync } = require("child_process");
+    const result = execSync(`curl -s "${url}"`, { timeout: 15_000 });
+    return parseObs(JSON.parse(result.toString()));
   } catch (e) {
     console.error(`[tracker/FRED] ${seriesId} failed:`, e);
     return null;
