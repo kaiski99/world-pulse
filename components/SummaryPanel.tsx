@@ -72,7 +72,7 @@ export default function SummaryPanel({
 
       <div
         className={`overflow-hidden transition-all duration-300 ${
-          expanded ? "max-h-[2000px] opacity-100" : "max-h-0 opacity-0"
+          expanded ? "max-h-[10000px] opacity-100" : "max-h-0 opacity-0"
         }`}
       >
         <div className="px-4 pb-4">
