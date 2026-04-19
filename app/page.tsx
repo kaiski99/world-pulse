@@ -21,6 +21,7 @@ import SankeyDiagram from "@/components/SankeyDiagram";
 import FlowHeatmap from "@/components/FlowHeatmap";
 import FlowTable from "@/components/FlowTable";
 import ActionsPanel from "@/components/ActionsPanel";
+import WorldMap from "@/components/WorldMap";
 
 const SOURCE_ORDER = [
   "paperswithcode",
@@ -180,6 +181,18 @@ export default function Home() {
           <>
             {activeView === "signals" && (
               <div className="px-6 py-4 pb-8">
+                {/* Interactive World Map */}
+                <div className="mb-6 rounded-xl bg-bg-surface border border-border-main overflow-hidden">
+                  <WorldMap
+                    snapshot={snapshot}
+                    activeFilter={activeFilter}
+                    onClusterSelect={(cluster) => {
+                      setExpandedCluster(expandedCluster === cluster.id ? null : cluster.id);
+                    }}
+                  />
+                </div>
+
+                {/* Signal Clusters + Connection Graph */}
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                   <div className="lg:col-span-3 space-y-3">
                     {filteredClusters.length > 0 ? (
