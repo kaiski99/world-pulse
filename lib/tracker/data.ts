@@ -8,7 +8,7 @@ import {
   DataStatus,
 } from "./types";
 
-const TIMEOUT = 12_000;
+const TIMEOUT = 25_000;
 
 function makePoint(
   id: string,
@@ -49,21 +49,23 @@ async function fetchJSON(url: string, signal?: AbortSignal) {
 // ─── FRED (St. Louis Fed) — free API ───
 
 async function fetchFRED(
-  seriesId: string,
-  signal: AbortSignal
+  seriesId: string
 ): Promise<{ value: number; prev: number } | null> {
   const apiKey = process.env.FRED_API_KEY;
   if (!apiKey) return null;
   try {
+    const { execSync } = require("child_process");
     const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=2`;
-    const data = await fetchJSON(url, signal);
+    const result = execSync(`curl -s "${url}"`, { timeout: 15_000 });
+    const data = JSON.parse(result.toString());
     const obs = data?.observations;
     if (!obs || obs.length < 1) return null;
     const current = parseFloat(obs[0].value);
     const prev = obs.length > 1 ? parseFloat(obs[1].value) : current;
     if (isNaN(current)) return null;
     return { value: current, prev: isNaN(prev) ? current : prev };
-  } catch {
+  } catch (e) {
+    console.error(`[tracker/FRED] ${seriesId} failed:`, e);
     return null;
   }
 }
@@ -71,7 +73,7 @@ async function fetchFRED(
 // ─── Macro Data Fetcher ───
 
 export async function fetchMacroData(): Promise<MacroSnapshot> {
-  console.log("[tracker/data] Fetching macro data...");
+  console.log("[tracker/data] Fetching macro data... FRED_API_KEY:", process.env.FRED_API_KEY ? "SET" : "NOT SET");
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), TIMEOUT);
@@ -90,14 +92,14 @@ export async function fetchMacroData(): Promise<MacroSnapshot> {
     vixProxy,
     goldData,
   ] = await Promise.allSettled([
-    fetchFRED("DGS2", signal),
-    fetchFRED("DGS10", signal),
-    fetchFRED("DFII10", signal),
-    fetchFRED("FEDFUNDS", signal),
-    fetchFRED("BAMLH0A0HYM2", signal),
-    fetchFRED("WALCL", signal),
-    fetchFRED("RRPONTSYD", signal),
-    fetchFRED("WTREGEN", signal),
+    fetchFRED("DGS2"),
+    fetchFRED("DGS10"),
+    fetchFRED("DFII10"),
+    fetchFRED("FEDFUNDS"),
+    fetchFRED("BAMLH0A0HYM2"),
+    fetchFRED("WALCL"),
+    fetchFRED("RRPONTSYD"),
+    fetchFRED("WTREGEN"),
     fetchJSON("https://api.frankfurter.app/latest?from=USD&to=EUR,JPY,CNY,GBP", signal).catch(() => null),
     fetchJSON("https://api.coingecko.com/api/v3/simple/price?ids=volatility-index-token&vs_currencies=usd&include_24hr_change=true", signal).catch(() => null),
     fetchJSON("https://api.coingecko.com/api/v3/simple/price?ids=paxos-gold&vs_currencies=usd&include_24hr_change=true", signal).catch(() => null),
