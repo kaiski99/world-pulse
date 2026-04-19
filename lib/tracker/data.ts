@@ -9,6 +9,11 @@ import {
 } from "./types";
 
 const TIMEOUT = 25_000;
+const COINGECKO_DELAY_MS = 7_000;
+
+// In-memory OHLCV cache (survives across requests in dev/long-lived serverless)
+const ohlcvCache = new Map<string, { data: OHLCV[]; fetchedAt: number }>();
+const OHLCV_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
 
 function makePoint(
   id: string,
@@ -301,89 +306,98 @@ export async function fetchTokenData(
 
   clearTimeout(timeout);
 
-  // Fetch OHLCV for each token (30 days daily, weekly derived)
-  const ohlcvPromises = tokens
-    .filter((t) => t.status === "LIVE")
-    .map(async (token) => {
+  // Fetch OHLCV sequentially with delay to avoid CoinGecko rate limits (~10 req/min free tier)
+  // Uses in-memory cache (4h TTL) to minimize API calls
+  const liveTokens = tokens.filter((t) => t.status === "LIVE");
+  let fetchCount = 0;
+  for (let i = 0; i < liveTokens.length; i++) {
+    const token = liveTokens[i];
+
+    let rawCandles: OHLCV[] | null = null;
+    const cached = ohlcvCache.get(token.id);
+    if (cached && Date.now() - cached.fetchedAt < OHLCV_CACHE_TTL) {
+      rawCandles = cached.data;
+      console.log(`[tracker/data] OHLCV ${i + 1}/${liveTokens.length}: ${token.id} (cached)`);
+    } else {
+      if (fetchCount > 0) await new Promise((r) => setTimeout(r, COINGECKO_DELAY_MS));
       try {
         const data = await fetchJSON(
-          `https://api.coingecko.com/api/v3/coins/${token.id}/ohlc?vs_currency=usd&days=210`,
-          controller.signal
+          `https://api.coingecko.com/api/v3/coins/${token.id}/ohlc?vs_currency=usd&days=180`
         );
-        if (!Array.isArray(data)) return;
-
-        const candles: OHLCV[] = data.map((d: number[]) => ({
-          timestamp: new Date(d[0]).toISOString(),
-          open: d[1],
-          high: d[2],
-          low: d[3],
-          close: d[4],
-          volume: 0,
-        }));
-
-        token.dailyCandles = candles.slice(-30);
-
-        // Build weekly candles from daily (group by week)
-        const weeks: OHLCV[][] = [];
-        let currentWeek: OHLCV[] = [];
-        for (const c of candles) {
-          const day = new Date(c.timestamp).getUTCDay();
-          if (day === 1 && currentWeek.length > 0) {
-            weeks.push(currentWeek);
-            currentWeek = [];
-          }
-          currentWeek.push(c);
-        }
-        if (currentWeek.length > 0) weeks.push(currentWeek);
-
-        token.weeklyCandles = weeks.map((w) => ({
-          timestamp: w[0].timestamp,
-          open: w[0].open,
-          high: Math.max(...w.map((c) => c.high)),
-          low: Math.min(...w.map((c) => c.low)),
-          close: w[w.length - 1].close,
-          volume: w.reduce((s, c) => s + c.volume, 0),
-        }));
-
-        // 30-week SMA
-        if (token.weeklyCandles.length >= 30) {
-          const last30 = token.weeklyCandles.slice(-30);
-          token.sma30w = last30.reduce((s, c) => s + c.close, 0) / 30;
-        } else if (token.weeklyCandles.length > 0) {
-          token.sma30w =
-            token.weeklyCandles.reduce((s, c) => s + c.close, 0) /
-            token.weeklyCandles.length;
-        }
-
-        // ATR(14) on daily
-        if (token.dailyCandles.length >= 15) {
-          const last15 = token.dailyCandles.slice(-15);
-          let atrSum = 0;
-          for (let i = 1; i < last15.length; i++) {
-            const tr = Math.max(
-              last15[i].high - last15[i].low,
-              Math.abs(last15[i].high - last15[i - 1].close),
-              Math.abs(last15[i].low - last15[i - 1].close)
-            );
-            atrSum += tr;
-          }
-          token.atr14 = atrSum / 14;
-        }
-
-        // Range compression: last 15 candles range / price
-        if (token.dailyCandles.length >= 15) {
-          const last15 = token.dailyCandles.slice(-15);
-          const rangeHigh = Math.max(...last15.map((c) => c.high));
-          const rangeLow = Math.min(...last15.map((c) => c.low));
-          const mid = (rangeHigh + rangeLow) / 2;
-          token.rangeCompression = mid > 0 ? ((rangeHigh - rangeLow) / mid) * 100 : 0;
+        fetchCount++;
+        if (Array.isArray(data)) {
+          rawCandles = data.map((d: number[]) => ({
+            timestamp: new Date(d[0]).toISOString(),
+            open: d[1],
+            high: d[2],
+            low: d[3],
+            close: d[4],
+            volume: 0,
+          }));
+          ohlcvCache.set(token.id, { data: rawCandles, fetchedAt: Date.now() });
+          console.log(`[tracker/data] OHLCV ${i + 1}/${liveTokens.length}: ${token.id} OK`);
         }
       } catch {
-        // OHLCV fetch failed, keep basic price data
+        console.log(`[tracker/data] OHLCV ${i + 1}/${liveTokens.length}: ${token.id} failed`);
       }
-    });
+    }
 
-  await Promise.allSettled(ohlcvPromises);
+    if (!rawCandles) continue;
+
+    token.dailyCandles = rawCandles.slice(-30);
+
+    const weeks: OHLCV[][] = [];
+    let currentWeek: OHLCV[] = [];
+    for (const c of rawCandles) {
+      const day = new Date(c.timestamp).getUTCDay();
+      if (day === 1 && currentWeek.length > 0) {
+        weeks.push(currentWeek);
+        currentWeek = [];
+      }
+      currentWeek.push(c);
+    }
+    if (currentWeek.length > 0) weeks.push(currentWeek);
+
+    token.weeklyCandles = weeks.map((w) => ({
+      timestamp: w[0].timestamp,
+      open: w[0].open,
+      high: Math.max(...w.map((c) => c.high)),
+      low: Math.min(...w.map((c) => c.low)),
+      close: w[w.length - 1].close,
+      volume: w.reduce((s, c) => s + c.volume, 0),
+    }));
+
+    if (token.weeklyCandles.length >= 30) {
+      const last30 = token.weeklyCandles.slice(-30);
+      token.sma30w = last30.reduce((s, c) => s + c.close, 0) / 30;
+    } else if (token.weeklyCandles.length > 0) {
+      token.sma30w =
+        token.weeklyCandles.reduce((s, c) => s + c.close, 0) /
+        token.weeklyCandles.length;
+    }
+
+    if (token.dailyCandles.length >= 15) {
+      const last15 = token.dailyCandles.slice(-15);
+      let atrSum = 0;
+      for (let i2 = 1; i2 < last15.length; i2++) {
+        const tr = Math.max(
+          last15[i2].high - last15[i2].low,
+          Math.abs(last15[i2].high - last15[i2 - 1].close),
+          Math.abs(last15[i2].low - last15[i2 - 1].close)
+        );
+        atrSum += tr;
+      }
+      token.atr14 = atrSum / 14;
+    }
+
+    if (token.dailyCandles.length >= 15) {
+      const last15 = token.dailyCandles.slice(-15);
+      const rangeHigh = Math.max(...last15.map((c) => c.high));
+      const rangeLow = Math.min(...last15.map((c) => c.low));
+      const mid = (rangeHigh + rangeLow) / 2;
+      token.rangeCompression = mid > 0 ? ((rangeHigh - rangeLow) / mid) * 100 : 0;
+    }
+  }
 
   console.log(`[tracker/data] Token data complete: ${tokens.length} tokens.`);
   return tokens;
@@ -482,19 +496,9 @@ export const DEFAULT_WATCHLIST = [
   "solana",
   "binancecoin",
   "ripple",
-  "cardano",
   "avalanche-2",
-  "polkadot",
   "chainlink",
-  "near",
   "sui",
-  "aptos",
-  "arbitrum",
-  "optimism",
   "celestia",
-  "injective-protocol",
   "render-token",
-  "fetch-ai",
-  "jupiter-exchange-solana",
-  "ondo-finance",
 ];
