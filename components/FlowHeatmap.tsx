@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { HeatmapCell } from "@/lib/types";
+import { trackEvent } from "@/lib/tracking/events";
 
 interface FlowHeatmapProps {
   heatmapData: HeatmapCell[];
@@ -50,6 +51,7 @@ export default function FlowHeatmap({
   }, [heatmapData, activeSort, internalSort.asc]);
 
   function handleSort(col: string) {
+    trackEvent("heatmap_sorted", { column: col });
     if (onSortChange) {
       onSortChange(col);
     } else {

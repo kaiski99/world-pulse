@@ -1,5 +1,7 @@
 "use client";
 
+import { useBriefingReadTracker } from "@/lib/tracking/events";
+
 interface SummaryPanelProps {
   summary: string | null;
   loading: boolean;
@@ -41,6 +43,8 @@ export default function SummaryPanel({
   onToggle,
   hasData,
 }: SummaryPanelProps) {
+  useBriefingReadTracker(expanded, !!summary);
+
   return (
     <div className="mx-6 mt-4 rounded-lg bg-bg-surface border border-border-main border-l-4 border-l-accent-indigo overflow-hidden">
       <button

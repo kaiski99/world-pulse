@@ -1,6 +1,7 @@
 "use client";
 
 import { SourceResult } from "@/lib/types";
+import { trackEvent } from "@/lib/tracking/events";
 import LoadingSkeleton from "./LoadingSkeleton";
 
 interface SourceCardProps {
@@ -84,7 +85,10 @@ export default function SourceCard({
         </div>
         {source.error && onRetry && (
           <button
-            onClick={() => onRetry(source.source)}
+            onClick={() => {
+              trackEvent("source_retried", { source_key: source.source });
+              onRetry(source.source);
+            }}
             className="text-[10px] font-[family-name:var(--font-mono)] px-2 py-0.5 rounded border border-accent-orange text-accent-orange hover:bg-accent-orange/10 transition-colors"
           >
             RETRY

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, useReducer } from "react";
+import { trackEvent, trackConversion, updateDashboardState, useScrollDepth, useSessionTimer } from "@/lib/tracking/events";
 import {
   PulseSnapshot,
   SourceResult,
@@ -47,10 +48,25 @@ export default function Home() {
   const [activeActionFilter, setActiveActionFilter] = useState<ActionType | "all">("all");
   const [heatmapSort, setHeatmapSort] = useState<string | undefined>();
   const searchRef = useRef<HTMLInputElement>(null);
+  const fetchStartRef = useRef<number>(0);
+
+  useScrollDepth();
+  const { incrementRefresh, addView } = useSessionTimer();
+
+  useEffect(() => {
+    updateDashboardState({
+      active_view: activeView,
+      active_filter: activeFilter,
+      has_data: !!snapshot,
+      cluster_count: snapshot?.clusters?.length || 0,
+      action_count: snapshot?.actions?.actions?.length || 0,
+    });
+  }, [activeView, activeFilter, snapshot]);
 
   const handleRefresh = useCallback(async () => {
     setLoading(true);
     setError(null);
+    fetchStartRef.current = Date.now();
     try {
       const profile: BusinessProfile = getBusinessProfile();
       const res = await fetch("/api/fetch-all?summarize=true&actions=true", {
@@ -61,12 +77,20 @@ export default function Home() {
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const data: PulseSnapshot = await res.json();
       setSnapshot(data);
+      incrementRefresh();
+      trackConversion("dashboard_refresh", {
+        source_count: data.sources?.length || 0,
+        cluster_count: data.clusters?.length || 0,
+        has_actions: !!data.actions,
+        has_summary: !!data.summary,
+        fetch_duration_ms: Date.now() - fetchStartRef.current,
+      });
     } catch (err: any) {
       setError(err.message || "Failed to fetch data");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [incrementRefresh]);
 
   const handleRetry = useCallback(async (sourceKey: string) => {
     try {
@@ -91,17 +115,33 @@ export default function Home() {
 
     function handleKeyDown(e: KeyboardEvent) {
       if (document.activeElement === searchRef.current) return;
+      const shortcutKeys = ["r", "s", "a", "Tab", "/", "Escape", "0", "1", "2", "3", "4", "5", "p"];
+      if (shortcutKeys.includes(e.key)) {
+        trackEvent("keyboard_shortcut_used", { key: e.key, action: e.key });
+      }
       if (e.key === "r" && !e.metaKey && !e.ctrlKey) handleRefresh();
       if (e.key === "s" && !e.metaKey && !e.ctrlKey) setSummaryExpanded((v) => !v);
       if (e.key === "a" && !e.metaKey && !e.ctrlKey) setActionsExpanded((v) => !v);
       if (e.key === "Tab" && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
-        setActiveView((v) => views[(views.indexOf(v) + 1) % views.length]);
+        setActiveView((v) => {
+          const next = views[(views.indexOf(v) + 1) % views.length];
+          trackEvent("view_switch", { from_view: v, to_view: next, trigger: "keyboard" });
+          addView(next);
+          return next;
+        });
       }
       if (e.key === "/") { e.preventDefault(); searchRef.current?.focus(); }
       if (e.key === "Escape") { setSearchQuery(""); setActiveFilter("all"); setExpandedCluster(null); searchRef.current?.blur(); }
-      if (e.key >= "1" && e.key <= "5") setActiveFilter(verticals[parseInt(e.key) - 1]);
-      if (e.key === "0") setActiveFilter("all");
+      if (e.key >= "1" && e.key <= "5") {
+        const v = verticals[parseInt(e.key) - 1];
+        trackEvent("filter_used", { filter_value: v, previous_filter: activeFilter });
+        setActiveFilter(v);
+      }
+      if (e.key === "0") {
+        trackEvent("filter_used", { filter_value: "all", previous_filter: activeFilter });
+        setActiveFilter("all");
+      }
       if (e.key === "p" && !e.metaKey && !e.ctrlKey) window.location.href = "/settings";
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -150,12 +190,19 @@ export default function Home() {
           onRefresh={handleRefresh}
           loading={loading}
           activeView={activeView}
-          onViewChange={(v) => setActiveView(v as any)}
+          onViewChange={(v) => {
+            trackEvent("view_switch", { from_view: activeView, to_view: v, trigger: "click" });
+            addView(v);
+            setActiveView(v as any);
+          }}
         />
 
         <PriorityFilterBar
           activeFilter={activeFilter}
-          onFilterChange={(f) => setActiveFilter(f as any)}
+          onFilterChange={(f) => {
+            trackEvent("filter_used", { filter_value: f, previous_filter: activeFilter });
+            setActiveFilter(f as any);
+          }}
           breakdown={snapshot?.priorityBreakdown || null}
         />
 
@@ -163,7 +210,10 @@ export default function Home() {
           summary={snapshot?.summary || null}
           loading={loading && !snapshot}
           expanded={summaryExpanded}
-          onToggle={() => setSummaryExpanded((v) => !v)}
+          onToggle={() => {
+            trackEvent("summary_panel_toggled", { expanded: !summaryExpanded });
+            setSummaryExpanded((v) => !v);
+          }}
           hasData={hasData}
         />
 
@@ -187,6 +237,7 @@ export default function Home() {
                     snapshot={snapshot}
                     activeFilter={activeFilter}
                     onClusterSelect={(cluster) => {
+                      trackEvent("world_map_cluster_selected", { cluster_id: cluster.id, cluster_name: cluster.name });
                       setExpandedCluster(expandedCluster === cluster.id ? null : cluster.id);
                     }}
                   />
@@ -196,12 +247,24 @@ export default function Home() {
                 <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
                   <div className="lg:col-span-3 space-y-3">
                     {filteredClusters.length > 0 ? (
-                      filteredClusters.slice(0, 20).map((cluster) => (
+                      filteredClusters.slice(0, 20).map((cluster, idx) => (
                         <SignalClusterCard
                           key={cluster.id}
                           cluster={cluster}
                           expanded={expandedCluster === cluster.id}
-                          onToggle={() => setExpandedCluster(expandedCluster === cluster.id ? null : cluster.id)}
+                          onToggle={() => {
+                            const expanding = expandedCluster !== cluster.id;
+                            if (expanding) {
+                              trackEvent("cluster_expanded", {
+                                cluster_id: cluster.id,
+                                cluster_name: cluster.name,
+                                signal_strength: cluster.signalStrength,
+                                source_count: cluster.sourceCount,
+                                position_index: idx,
+                              });
+                            }
+                            setExpandedCluster(expandedCluster === cluster.id ? null : cluster.id);
+                          }}
                           searchQuery={searchQuery}
                         />
                       ))
@@ -310,9 +373,15 @@ export default function Home() {
         <ActionsPanel
           actions={snapshot?.actions || null}
           expanded={actionsExpanded}
-          onToggle={() => setActionsExpanded((v) => !v)}
+          onToggle={() => {
+            trackEvent("actions_panel_toggled", { expanded: !actionsExpanded });
+            setActionsExpanded((v) => !v);
+          }}
           activeFilter={activeActionFilter}
-          onFilterChange={setActiveActionFilter}
+          onFilterChange={(f) => {
+            trackEvent("action_filter_changed", { filter_type: f, previous_filter: activeActionFilter });
+            setActiveActionFilter(f);
+          }}
         />
       )}
     </div>

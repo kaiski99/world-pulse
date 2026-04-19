@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { BusinessProfile, PortfolioCompany } from "@/lib/types";
 import { DEFAULT_BUSINESS_PROFILE } from "@/lib/config/business-profile";
+import { trackEvent, trackConversion } from "@/lib/tracking/events";
 import CompanyCard from "./CompanyCard";
 import TagInput from "./TagInput";
 
@@ -59,6 +60,7 @@ export default function SettingsForm() {
   }
 
   function addCompany() {
+    trackEvent("company_added", { portfolio_count_after: profile.portfolio.length + 1 });
     setProfile((prev) => ({
       ...prev,
       portfolio: [
@@ -72,6 +74,24 @@ export default function SettingsForm() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
     setToast(true);
     setTimeout(() => setToast(false), 3000);
+    const filledFields = [
+      profile.orgName !== DEFAULT_BUSINESS_PROFILE.orgName,
+      profile.description !== DEFAULT_BUSINESS_PROFILE.description,
+      profile.edge !== DEFAULT_BUSINESS_PROFILE.edge,
+      profile.portfolio.length > 0,
+      profile.interests.length > 0,
+      profile.goals.length > 0,
+      profile.riskTolerance !== DEFAULT_BUSINESS_PROFILE.riskTolerance,
+      profile.regions.length > 0,
+    ];
+    trackConversion("profile_saved", {
+      portfolio_count: profile.portfolio.length,
+      interest_count: profile.interests.length,
+      goal_count: profile.goals.length,
+      risk_tolerance: profile.riskTolerance,
+      region_count: profile.regions.length,
+      profile_completeness_pct: Math.round((filledFields.filter(Boolean).length / filledFields.length) * 100),
+    });
   }
 
   function reset() {

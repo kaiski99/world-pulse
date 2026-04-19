@@ -1,9 +1,15 @@
 "use client";
 
+import { useEffect } from "react";
 import Link from "next/link";
 import SettingsForm from "@/components/SettingsForm";
+import { trackEvent } from "@/lib/tracking/events";
 
 export default function SettingsPage() {
+  useEffect(() => {
+    trackEvent("settings_page_visited");
+  }, []);
+
   return (
     <div className="min-h-screen bg-bg-primary text-text-primary">
       <div className="max-w-3xl mx-auto px-6 py-8">

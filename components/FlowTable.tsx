@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from "react";
 import { FlowDataPoint } from "@/lib/types";
+import { trackEvent } from "@/lib/tracking/events";
 
 interface FlowTableProps {
   title: string;
@@ -156,7 +157,10 @@ export default function FlowTable({
     <div className="rounded bg-bg-surface border border-border-main overflow-hidden">
       {/* Header */}
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          if (!isOpen) trackEvent("flow_table_expanded", { table_title: title, row_count: data.length });
+          setIsOpen(!isOpen);
+        }}
         className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-white/5 transition-colors"
       >
         <span className="text-lg">{icon}</span>
