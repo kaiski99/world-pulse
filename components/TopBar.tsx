@@ -71,6 +71,13 @@ export default function TopBar({
             Last updated: {formatRelativeTime(lastUpdated)}
           </span>
         )}
+        <Link
+          href="/tracker"
+          className="flex items-center gap-1.5 px-3 py-1.5 border border-accent-orange text-accent-orange text-sm font-[family-name:var(--font-mono)] rounded hover:bg-accent-orange/10 transition-colors"
+          title="Regime Tracker"
+        >
+          🎯 TRACKER
+        </Link>
         <button
           onClick={onRefresh}
           disabled={loading}
