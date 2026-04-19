@@ -54,7 +54,10 @@ export async function generateSummary(
   profile?: BusinessProfile
 ): Promise<string | undefined> {
   try {
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const client = new Anthropic({
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      timeout: 180_000,
+    });
 
     // ── Build Flow State section ──
     const { capital, macro, streams } = snapshot.flows;
@@ -158,8 +161,8 @@ export async function generateSummary(
     }
 
     // ── Build Signal Clusters section ──
-    const clusterLines = ["## SIGNAL CLUSTERS (Top 15)", ""];
-    snapshot.clusters.slice(0, 15).forEach((cluster, i) => {
+    const clusterLines = ["## SIGNAL CLUSTERS (Top 10)", ""];
+    snapshot.clusters.slice(0, 10).forEach((cluster, i) => {
       clusterLines.push(`### ${i + 1}. ${cluster.name}`);
       clusterLines.push(`- Signal Score: ${cluster.signalScore}`);
       clusterLines.push(`- Strength: ${cluster.signalStrength}`);
@@ -173,7 +176,7 @@ export async function generateSummary(
       }
       if (cluster.items.length > 0) {
         clusterLines.push("- Key items:");
-        cluster.items.slice(0, 5).forEach((ci) => {
+        cluster.items.slice(0, 3).forEach((ci) => {
           let line = `  - [${ci.sourceLabel}] ${ci.item.title}`;
           if (ci.item.score !== undefined) line += ` (score: ${ci.item.score})`;
           if (ci.item.description) line += ` — ${ci.item.description}`;
@@ -251,7 +254,7 @@ export async function generateSummary(
     ].join("\n");
 
     const response = await client.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 3500,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
@@ -261,6 +264,8 @@ export async function generateSummary(
     return textBlock?.text || "No summary generated.";
   } catch (err: any) {
     console.error("AI Briefing error:", err.message || String(err));
+    if (err.status) console.error("AI Briefing status:", err.status);
+    if (err.error) console.error("AI Briefing details:", JSON.stringify(err.error));
     return undefined;
   }
 }
