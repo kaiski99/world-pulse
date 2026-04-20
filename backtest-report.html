@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>World Pulse — Regime Tracker Backtest</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Inter:wght@300;400;500;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0a0a0f;
+    color: #e0e0e0;
+    font-family: 'Inter', sans-serif;
+    min-height: 100vh;
+  }
+
+  .header {
+    background: linear-gradient(135deg, #0f0f1a 0%, #1a0a2e 100%);
+    border-bottom: 1px solid #2a2a3a;
+    padding: 24px 32px;
+  }
+
+  .header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    background: linear-gradient(135deg, #ff6b35, #ff9f1c);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .header .subtitle {
+    font-size: 13px;
+    color: #888;
+    margin-top: 4px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: #12121f;
+    border: 1px solid #2a2a3a;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .stat-card .value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+
+  .stat-card .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: #888;
+  }
+
+  .green { color: #00ff88; }
+  .orange { color: #ff9f1c; }
+  .red { color: #ff4444; }
+  .blue { color: #4488ff; }
+  .white { color: #ffffff; }
+
+  .section {
+    background: #12121f;
+    border: 1px solid #2a2a3a;
+    border-radius: 12px;
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+
+  .section h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: #ff9f1c;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #2a2a3a;
+  }
+
+  .chart-container {
+    position: relative;
+    height: 400px;
+    width: 100%;
+  }
+
+  .chart-container-sm {
+    position: relative;
+    height: 250px;
+    width: 100%;
+  }
+
+  .state-timeline {
+    display: flex;
+    height: 20px;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 16px 0;
+  }
+
+  .state-block {
+    height: 100%;
+    min-width: 1px;
+  }
+
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+
+  th {
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid #2a2a3a;
+    color: #888;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 10px;
+  }
+
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #1a1a2a;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+
+  .badge-confirmed { background: #00ff8822; color: #00ff88; }
+  .badge-partial { background: #ffaa0022; color: #ffaa00; }
+  .badge-miss { background: #ff444422; color: #ff4444; }
+  .badge-quiet { background: #4488ff22; color: #4488ff; }
+  .badge-extended { background: #ff660022; color: #ff6600; }
+  .badge-invalid { background: #33333366; color: #888; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  @media (max-width: 768px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  .insight {
+    background: #1a1a2e;
+    border-left: 3px solid #ff9f1c;
+    padding: 12px 16px;
+    margin: 12px 0;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .footer {
+    text-align: center;
+    padding: 24px;
+    color: #444;
+    font-size: 11px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Regime Tracker Backtest</h1>
+  <div class="subtitle">52x BTC Trader vs Kotegawa State Machine — 2020-2026</div>
+</div>
+
+<div class="container">
+
+  <!-- Key Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value green">47%</div>
+      <div class="label">Bullish Alignment Rate</div>
+    </div>
+    <div class="stat-card">
+      <div class="value orange">9.2%</div>
+      <div class="label">Confirmed Match Rate</div>
+    </div>
+    <div class="stat-card">
+      <div class="value blue">816</div>
+      <div class="label">Net Long Entry Days</div>
+    </div>
+    <div class="stat-card">
+      <div class="value white">53</div>
+      <div class="label">Imbalance Signals</div>
+    </div>
+    <div class="stat-card">
+      <div class="value green">2.4%</div>
+      <div class="label">Avg 7d Return After Signal</div>
+    </div>
+    <div class="stat-card">
+      <div class="value green">8.9%</div>
+      <div class="label">Avg 30d Return After Signal</div>
+    </div>
+    <div class="stat-card">
+      <div class="value orange">60%</div>
+      <div class="label">Win Rate (7d)</div>
+    </div>
+    <div class="stat-card">
+      <div class="value orange">68%</div>
+      <div class="label">Win Rate (30d)</div>
+    </div>
+  </div>
+
+  <!-- Price Chart with State Machine Overlay -->
+  <div class="section">
+    <h2>BTC Price + Kotegawa State Machine Overlay</h2>
+    <div class="chart-container">
+      <canvas id="priceChart"></canvas>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#00ff88"></div> IMBALANCE_CONFIRMED</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ffaa00"></div> IMBALANCE_FORMING</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#4488ff"></div> QUIET</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff6600"></div> EXTENDED</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff4444"></div> Trader Entry (misaligned)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#00ff88"></div> Trader Entry (aligned)</div>
+    </div>
+  </div>
+
+  <!-- State Timeline -->
+  <div class="section">
+    <h2>State Machine Timeline</h2>
+    <p style="font-size:12px;color:#888;margin-bottom:8px;">Each pixel = 1 day. Color = state machine output.</p>
+    <div class="state-timeline" id="stateTimeline"></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#00ff88"></div> CONFIRMED</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ffaa00"></div> FORMING</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#4488ff"></div> QUIET</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff6600"></div> EXTENDED</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#333"></div> INVALID</div>
+    </div>
+  </div>
+
+  <!-- Analysis -->
+  <div class="grid-2">
+    <div class="section">
+      <h2>Signal Quality Analysis</h2>
+      <div class="insight">
+        The Kotegawa state machine identified <strong>53</strong> IMBALANCE_CONFIRMED signals across 2178 trading days.
+        Signals that preceded 7-day gains had a <strong>60%</strong> win rate with an average return of <strong>2.4%</strong>.
+      </div>
+      <div class="chart-container-sm">
+        <canvas id="returnChart"></canvas>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>Trader Alignment Breakdown</h2>
+      <div class="insight">
+        Of the trader's <strong>816</strong> net-long entry days,
+        <strong>382</strong> (47%)
+        aligned with bullish state machine states (CONFIRMED, FORMING, or QUIET).
+        <strong>434</strong> entries (53%) occurred in INVALID/EXTENDED states.
+      </div>
+      <div class="chart-container-sm">
+        <canvas id="alignmentChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Entry Details Table -->
+  <div class="section">
+    <h2>Significant Entry Analysis (Top 25% by Size)</h2>
+    <div style="max-height:400px;overflow-y:auto;">
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Entry Price</th>
+          <th>Net Qty</th>
+          <th>State</th>
+          <th>MA Distance</th>
+          <th>Alignment</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>2026-02-05</td>
+          <td>$67,593</td>
+          <td>380,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-40.0%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2026-01-20</td>
+          <td>$89,997</td>
+          <td>640,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>-16.8%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-11-21</td>
+          <td>$83,721</td>
+          <td>380,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-23.1%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-11-18</td>
+          <td>$90,087</td>
+          <td>360,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-15.0%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-11-14</td>
+          <td>$95,998</td>
+          <td>960,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-14.2%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-10-10</td>
+          <td>$110,994</td>
+          <td>610,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>7.8%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-06-22</td>
+          <td>$99,739</td>
+          <td>570,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>2.7%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-05-01</td>
+          <td>$95,977</td>
+          <td>900,000</td>
+          <td><span class="badge badge-confirmed">IMBALANCE_CONFIRMED</span></td>
+          <td>8.9%</td>
+          <td><span class="badge badge-confirmed">CONFIRMED MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-04-06</td>
+          <td>$79,861</td>
+          <td>572,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>-9.0%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-03-10</td>
+          <td>$79,777</td>
+          <td>686,800</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-4.0%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-03-09</td>
+          <td>$82,715</td>
+          <td>621,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-2.2%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-03-04</td>
+          <td>$83,182</td>
+          <td>626,900</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>9.1%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-03-03</td>
+          <td>$89,201</td>
+          <td>1,636,400</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>4.9%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-03-01</td>
+          <td>$85,333</td>
+          <td>922,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>6.2%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-26</td>
+          <td>$84,452</td>
+          <td>400,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>5.5%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-25</td>
+          <td>$88,294</td>
+          <td>680,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>10.3%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-20</td>
+          <td>$97,595</td>
+          <td>739,400</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>23.4%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-17</td>
+          <td>$96,167</td>
+          <td>420,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>21.0%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-13</td>
+          <td>$95,703</td>
+          <td>590,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>22.4%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-08</td>
+          <td>$96,333</td>
+          <td>510,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>23.6%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-02-05</td>
+          <td>$97,943</td>
+          <td>360,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>24.2%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-01-30</td>
+          <td>$104,933</td>
+          <td>898,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>38.4%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-01-27</td>
+          <td>$100,176</td>
+          <td>770,800</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>33.0%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-01-23</td>
+          <td>$104,769</td>
+          <td>1,960,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>37.9%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2025-01-13</td>
+          <td>$90,409</td>
+          <td>360,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>26.3%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-12-22</td>
+          <td>$95,520</td>
+          <td>450,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>34.1%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-12-20</td>
+          <td>$95,170</td>
+          <td>750,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>39.1%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-12-19</td>
+          <td>$98,330</td>
+          <td>860,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>37.0%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-12-15</td>
+          <td>$101,989</td>
+          <td>1,040,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>51.6%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-12-13</td>
+          <td>$101,603</td>
+          <td>480,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>47.7%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-12-05</td>
+          <td>$94,815</td>
+          <td>950,300</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>33.6%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-11-26</td>
+          <td>$92,597</td>
+          <td>810,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>38.1%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-11-25</td>
+          <td>$94,287</td>
+          <td>520,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>40.9%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-11-19</td>
+          <td>$92,451</td>
+          <td>420,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>43.7%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-11-05</td>
+          <td>$69,581</td>
+          <td>460,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>9.4%</td>
+          <td><span class="badge badge-confirmed">CONFIRMED MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-11-01</td>
+          <td>$69,463</td>
+          <td>2,050,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>9.2%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-10-25</td>
+          <td>$66,756</td>
+          <td>500,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>3.2%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-10-11</td>
+          <td>$61,895</td>
+          <td>350,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>-0.8%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-10-04</td>
+          <td>$61,189</td>
+          <td>540,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>-2.3%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-09-09</td>
+          <td>$55,763</td>
+          <td>1,830,400</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-9.0%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-08-23</td>
+          <td>$62,912</td>
+          <td>1,970,800</td>
+          <td><span class="badge badge-confirmed">IMBALANCE_CONFIRMED</span></td>
+          <td>3.3%</td>
+          <td><span class="badge badge-confirmed">CONFIRMED MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-08-18</td>
+          <td>$60,114</td>
+          <td>480,100</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-3.0%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-08-05</td>
+          <td>$53,067</td>
+          <td>671,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>-11.7%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-07-30</td>
+          <td>$66,271</td>
+          <td>560,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>9.5%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-07-29</td>
+          <td>$69,168</td>
+          <td>1,720,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>12.1%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-07-04</td>
+          <td>$58,014</td>
+          <td>400,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>1.1%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-06-30</td>
+          <td>$61,480</td>
+          <td>424,400</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>9.4%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-06-20</td>
+          <td>$65,160</td>
+          <td>560,000</td>
+          <td><span class="badge badge-quiet">QUIET</span></td>
+          <td>15.7%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-05-23</td>
+          <td>$67,588</td>
+          <td>500,000</td>
+          <td><span class="badge badge-invalid">INVALID</span></td>
+          <td>28.6%</td>
+          <td><span class="badge badge-miss">NO MATCH</span></td>
+        </tr>
+        <tr>
+          <td>2024-05-20</td>
+          <td>$68,446</td>
+          <td>640,000</td>
+          <td><span class="badge badge-extended">EXTENDED</span></td>
+          <td>36.9%</td>
+          <td><span class="badge badge-partial">PARTIAL MATCH</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <!-- Methodology -->
+  <div class="section">
+    <h2>Methodology</h2>
+    <div style="font-size:13px;line-height:1.8;color:#aaa;">
+      <p><strong>Data source:</strong> <a href="https://github.com/omgbbqhaxx/BTC-Trading-Since-2020" style="color:#ff9f1c;">omgbbqhaxx/BTC-Trading-Since-2020</a> —
+      816 net-long BTC entry days from a verified 52x BitMEX trader (Paul Wei / @coolish).</p>
+      <p style="margin-top:8px;"><strong>State machine:</strong> Kotegawa-inspired 5-state model (QUIET → IMBALANCE_FORMING → IMBALANCE_CONFIRMED → EXTENDED → INVALID).
+      Evaluates range compression, 30W MA flatness, volatility percentile, breakout confirmation, and candle body size.</p>
+      <p style="margin-top:8px;"><strong>Alignment:</strong> CONFIRMED_MATCH = trader entered on/near an IMBALANCE_CONFIRMED day.
+      PARTIAL_MATCH = entry during QUIET or FORMING state. NO_MATCH = entry during INVALID/EXTENDED.</p>
+      <p style="margin-top:8px;"><strong>Limitations:</strong> Regime score uses degraded macro data (historical FRED/DXY/VIX not reconstructed in this backtest).
+      Social volume data unavailable historically. Forward returns are simple close-to-close, not accounting for leverage or position management.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="footer">
+  World Pulse Intelligence Dashboard — Regime Tracker Backtest — Generated 2026-04-20 12:06
+</div>
+
+<script>
+// Chart data
+const dates = ["2020-05-01", "2020-05-04", "2020-05-07", "2020-05-10", "2020-05-13", "2020-05-16", "2020-05-19", "2020-05-22", "2020-05-25", "2020-05-28", "2020-05-31", "2020-06-03", "2020-06-06", "2020-06-09", "2020-06-12", "2020-06-15", "2020-06-18", "2020-06-21", "2020-06-24", "2020-06-27", "2020-06-30", "2020-07-03", "2020-07-06", "2020-07-09", "2020-07-12", "2020-07-15", "2020-07-18", "2020-07-21", "2020-07-24", "2020-07-27", "2020-07-30", "2020-08-02", "2020-08-05", "2020-08-08", "2020-08-11", "2020-08-14", "2020-08-17", "2020-08-20", "2020-08-23", "2020-08-26", "2020-08-29", "2020-09-01", "2020-09-04", "2020-09-07", "2020-09-10", "2020-09-13", "2020-09-16", "2020-09-19", "2020-09-22", "2020-09-25", "2020-09-28", "2020-10-01", "2020-10-04", "2020-10-07", "2020-10-10", "2020-10-13", "2020-10-16", "2020-10-19", "2020-10-22", "2020-10-25", "2020-10-28", "2020-10-31", "2020-11-03", "2020-11-06", "2020-11-09", "2020-11-12", "2020-11-15", "2020-11-18", "2020-11-21", "2020-11-24", "2020-11-27", "2020-11-30", "2020-12-03", "2020-12-06", "2020-12-09", "2020-12-12", "2020-12-15", "2020-12-18", "2020-12-21", "2020-12-24", "2020-12-27", "2020-12-30", "2021-01-02", "2021-01-05", "2021-01-08", "2021-01-11", "2021-01-14", "2021-01-17", "2021-01-20", "2021-01-23", "2021-01-26", "2021-01-29", "2021-02-01", "2021-02-04", "2021-02-07", "2021-02-10", "2021-02-13", "2021-02-16", "2021-02-19", "2021-02-22", "2021-02-25", "2021-02-28", "2021-03-03", "2021-03-06", "2021-03-09", "2021-03-12", "2021-03-15", "2021-03-18", "2021-03-21", "2021-03-24", "2021-03-27", "2021-03-30", "2021-04-02", "2021-04-05", "2021-04-08", "2021-04-11", "2021-04-14", "2021-04-17", "2021-04-20", "2021-04-23", "2021-04-26", "2021-04-29", "2021-05-02", "2021-05-05", "2021-05-08", "2021-05-11", "2021-05-14", "2021-05-17", "2021-05-20", "2021-05-23", "2021-05-26", "2021-05-29", "2021-06-01", "2021-06-04", "2021-06-07", "2021-06-10", "2021-06-13", "2021-06-16", "2021-06-19", "2021-06-22", "2021-06-25", "2021-06-28", "2021-07-01", "2021-07-04", "2021-07-07", "2021-07-10", "2021-07-13", "2021-07-16", "2021-07-19", "2021-07-22", "2021-07-25", "2021-07-28", "2021-07-31", "2021-08-03", "2021-08-06", "2021-08-09", "2021-08-12", "2021-08-15", "2021-08-18", "2021-08-21", "2021-08-24", "2021-08-27", "2021-08-30", "2021-09-02", "2021-09-05", "2021-09-08", "2021-09-11", "2021-09-14", "2021-09-17", "2021-09-20", "2021-09-23", "2021-09-26", "2021-09-29", "2021-10-02", "2021-10-05", "2021-10-08", "2021-10-11", "2021-10-14", "2021-10-17", "2021-10-20", "2021-10-23", "2021-10-26", "2021-10-29", "2021-11-01", "2021-11-04", "2021-11-07", "2021-11-10", "2021-11-13", "2021-11-16", "2021-11-19", "2021-11-22", "2021-11-25", "2021-11-28", "2021-12-01", "2021-12-04", "2021-12-07", "2021-12-10", "2021-12-13", "2021-12-16", "2021-12-19", "2021-12-22", "2021-12-25", "2021-12-28", "2021-12-31", "2022-01-03", "2022-01-06", "2022-01-09", "2022-01-12", "2022-01-15", "2022-01-18", "2022-01-21", "2022-01-24", "2022-01-27", "2022-01-30", "2022-02-02", "2022-02-05", "2022-02-08", "2022-02-11", "2022-02-14", "2022-02-17", "2022-02-20", "2022-02-23", "2022-02-26", "2022-03-01", "2022-03-04", "2022-03-07", "2022-03-10", "2022-03-13", "2022-03-16", "2022-03-19", "2022-03-22", "2022-03-25", "2022-03-28", "2022-03-31", "2022-04-03", "2022-04-06", "2022-04-09", "2022-04-12", "2022-04-15", "2022-04-18", "2022-04-21", "2022-04-24", "2022-04-27", "2022-04-30", "2022-05-03", "2022-05-06", "2022-05-09", "2022-05-12", "2022-05-15", "2022-05-18", "2022-05-21", "2022-05-24", "2022-05-27", "2022-05-30", "2022-06-02", "2022-06-05", "2022-06-08", "2022-06-11", "2022-06-14", "2022-06-17", "2022-06-20", "2022-06-23", "2022-06-26", "2022-06-29", "2022-07-02", "2022-07-05", "2022-07-08", "2022-07-11", "2022-07-14", "2022-07-17", "2022-07-20", "2022-07-23", "2022-07-26", "2022-07-29", "2022-08-01", "2022-08-04", "2022-08-07", "2022-08-10", "2022-08-13", "2022-08-16", "2022-08-19", "2022-08-22", "2022-08-25", "2022-08-28", "2022-08-31", "2022-09-03", "2022-09-06", "2022-09-09", "2022-09-12", "2022-09-15", "2022-09-18", "2022-09-21", "2022-09-24", "2022-09-27", "2022-09-30", "2022-10-03", "2022-10-06", "2022-10-09", "2022-10-12", "2022-10-15", "2022-10-18", "2022-10-21", "2022-10-24", "2022-10-27", "2022-10-30", "2022-11-02", "2022-11-05", "2022-11-08", "2022-11-11", "2022-11-14", "2022-11-17", "2022-11-20", "2022-11-23", "2022-11-26", "2022-11-29", "2022-12-02", "2022-12-05", "2022-12-08", "2022-12-11", "2022-12-14", "2022-12-17", "2022-12-20", "2022-12-23", "2022-12-26", "2022-12-29", "2023-01-01", "2023-01-04", "2023-01-07", "2023-01-10", "2023-01-13", "2023-01-16", "2023-01-19", "2023-01-22", "2023-01-25", "2023-01-28", "2023-01-31", "2023-02-03", "2023-02-06", "2023-02-09", "2023-02-12", "2023-02-15", "2023-02-18", "2023-02-21", "2023-02-24", "2023-02-27", "2023-03-02", "2023-03-05", "2023-03-08", "2023-03-11", "2023-03-14", "2023-03-17", "2023-03-20", "2023-03-23", "2023-03-26", "2023-03-29", "2023-04-01", "2023-04-04", "2023-04-07", "2023-04-10", "2023-04-13", "2023-04-16", "2023-04-19", "2023-04-22", "2023-04-25", "2023-04-28", "2023-05-01", "2023-05-04", "2023-05-07", "2023-05-10", "2023-05-13", "2023-05-16", "2023-05-19", "2023-05-22", "2023-05-25", "2023-05-28", "2023-05-31", "2023-06-03", "2023-06-06", "2023-06-09", "2023-06-12", "2023-06-15", "2023-06-18", "2023-06-21", "2023-06-24", "2023-06-27", "2023-06-30", "2023-07-03", "2023-07-06", "2023-07-09", "2023-07-12", "2023-07-15", "2023-07-18", "2023-07-21", "2023-07-24", "2023-07-27", "2023-07-30", "2023-08-02", "2023-08-05", "2023-08-08", "2023-08-11", "2023-08-14", "2023-08-17", "2023-08-20", "2023-08-23", "2023-08-26", "2023-08-29", "2023-09-01", "2023-09-04", "2023-09-07", "2023-09-10", "2023-09-13", "2023-09-16", "2023-09-19", "2023-09-22", "2023-09-25", "2023-09-28", "2023-10-01", "2023-10-04", "2023-10-07", "2023-10-10", "2023-10-13", "2023-10-16", "2023-10-19", "2023-10-22", "2023-10-25", "2023-10-28", "2023-10-31", "2023-11-03", "2023-11-06", "2023-11-09", "2023-11-12", "2023-11-15", "2023-11-18", "2023-11-21", "2023-11-24", "2023-11-27", "2023-11-30", "2023-12-03", "2023-12-06", "2023-12-09", "2023-12-12", "2023-12-15", "2023-12-18", "2023-12-21", "2023-12-24", "2023-12-27", "2023-12-30", "2024-01-02", "2024-01-05", "2024-01-08", "2024-01-11", "2024-01-14", "2024-01-17", "2024-01-20", "2024-01-23", "2024-01-26", "2024-01-29", "2024-02-01", "2024-02-04", "2024-02-07", "2024-02-10", "2024-02-13", "2024-02-16", "2024-02-19", "2024-02-22", "2024-02-25", "2024-02-28", "2024-03-02", "2024-03-05", "2024-03-08", "2024-03-11", "2024-03-14", "2024-03-17", "2024-03-20", "2024-03-23", "2024-03-26", "2024-03-29", "2024-04-01", "2024-04-04", "2024-04-07", "2024-04-10", "2024-04-13", "2024-04-16", "2024-04-19", "2024-04-22", "2024-04-25", "2024-04-28", "2024-05-01", "2024-05-04", "2024-05-07", "2024-05-10", "2024-05-13", "2024-05-16", "2024-05-19", "2024-05-22", "2024-05-25", "2024-05-28", "2024-05-31", "2024-06-03", "2024-06-06", "2024-06-09", "2024-06-12", "2024-06-15", "2024-06-18", "2024-06-21", "2024-06-24", "2024-06-27", "2024-06-30", "2024-07-03", "2024-07-06", "2024-07-09", "2024-07-12", "2024-07-15", "2024-07-18", "2024-07-21", "2024-07-24", "2024-07-27", "2024-07-30", "2024-08-02", "2024-08-05", "2024-08-08", "2024-08-11", "2024-08-14", "2024-08-17", "2024-08-20", "2024-08-23", "2024-08-26", "2024-08-29", "2024-09-01", "2024-09-04", "2024-09-07", "2024-09-10", "2024-09-13", "2024-09-16", "2024-09-19", "2024-09-22", "2024-09-25", "2024-09-28", "2024-10-01", "2024-10-04", "2024-10-07", "2024-10-10", "2024-10-13", "2024-10-16", "2024-10-19", "2024-10-22", "2024-10-25", "2024-10-28", "2024-10-31", "2024-11-03", "2024-11-06", "2024-11-09", "2024-11-12", "2024-11-15", "2024-11-18", "2024-11-21", "2024-11-24", "2024-11-27", "2024-11-30", "2024-12-03", "2024-12-06", "2024-12-09", "2024-12-12", "2024-12-15", "2024-12-18", "2024-12-21", "2024-12-24", "2024-12-27", "2024-12-30", "2025-01-02", "2025-01-05", "2025-01-08", "2025-01-11", "2025-01-14", "2025-01-17", "2025-01-20", "2025-01-23", "2025-01-26", "2025-01-29", "2025-02-01", "2025-02-04", "2025-02-07", "2025-02-10", "2025-02-13", "2025-02-16", "2025-02-19", "2025-02-22", "2025-02-25", "2025-02-28", "2025-03-03", "2025-03-06", "2025-03-09", "2025-03-12", "2025-03-15", "2025-03-18", "2025-03-21", "2025-03-24", "2025-03-27", "2025-03-30", "2025-04-02", "2025-04-05", "2025-04-08", "2025-04-11", "2025-04-14", "2025-04-17", "2025-04-20", "2025-04-23", "2025-04-26", "2025-04-29", "2025-05-02", "2025-05-05", "2025-05-08", "2025-05-11", "2025-05-14", "2025-05-17", "2025-05-20", "2025-05-23", "2025-05-26", "2025-05-29", "2025-06-01", "2025-06-04", "2025-06-07", "2025-06-10", "2025-06-13", "2025-06-16", "2025-06-19", "2025-06-22", "2025-06-25", "2025-06-28", "2025-07-01", "2025-07-04", "2025-07-07", "2025-07-10", "2025-07-13", "2025-07-16", "2025-07-19", "2025-07-22", "2025-07-25", "2025-07-28", "2025-07-31", "2025-08-03", "2025-08-06", "2025-08-09", "2025-08-12", "2025-08-15", "2025-08-18", "2025-08-21", "2025-08-24", "2025-08-27", "2025-08-30", "2025-09-02", "2025-09-05", "2025-09-08", "2025-09-11", "2025-09-14", "2025-09-17", "2025-09-20", "2025-09-23", "2025-09-26", "2025-09-29", "2025-10-02", "2025-10-05", "2025-10-08", "2025-10-11", "2025-10-14", "2025-10-17", "2025-10-20", "2025-10-23", "2025-10-26", "2025-10-29", "2025-11-01", "2025-11-04", "2025-11-07", "2025-11-10", "2025-11-13", "2025-11-16", "2025-11-19", "2025-11-22", "2025-11-25", "2025-11-28", "2025-12-01", "2025-12-04", "2025-12-07", "2025-12-10", "2025-12-13", "2025-12-16", "2025-12-19", "2025-12-22", "2025-12-25", "2025-12-28", "2025-12-31", "2026-01-03", "2026-01-06", "2026-01-09", "2026-01-12", "2026-01-15", "2026-01-18", "2026-01-21", "2026-01-24", "2026-01-27", "2026-01-30", "2026-02-02", "2026-02-05", "2026-02-08", "2026-02-11", "2026-02-14", "2026-02-17", "2026-02-20", "2026-02-23", "2026-02-26", "2026-03-01", "2026-03-04", "2026-03-07", "2026-03-10", "2026-03-13", "2026-03-16", "2026-03-19", "2026-03-22", "2026-03-25", "2026-03-28", "2026-03-31", "2026-04-03", "2026-04-06", "2026-04-09", "2026-04-12", "2026-04-15"];  // Sample every 3rd day for performance
+const prices = [8760.0, 8845.7, 9272.0, 8524.4, 8403.0, 8403.0, 8403.0, 9173.0, 8936.2, 9406.5, 9429.0, 9620.5, 9662.4, 9732.3, 9453.0, 9424.0, 9392.3, 9339.6, 9291.4, 9111.0, 9137.6, 9090.8, 9295.0, 9224.5, 9284.5, 9173.7, 9166.2, 9360.5, 9594.3, 10778.0, 11137.2, 10960.5, 11613.5, 11721.7, 11139.0, 11709.0, 12343.9, 11857.5, 11686.8, 11471.0, 11528.8, 11972.1, 10587.1, 10192.5, 10329.0, 10312.0, 10984.0, 11091.0, 10445.5, 10721.4, 10752.0, 10568.5, 10659.0, 10649.8, 11269.5, 11392.5, 11313.0, 11694.2, 12952.0, 13054.7, 13226.5, 13869.0, 13949.5, 15286.5, 15208.0, 16333.0, 15984.5, 18223.0, 18692.6, 19170.1, 17241.0, 19246.4, 19443.5, 19361.5, 18428.0, 18750.0, 19379.5, 22889.0, 22811.0, 23300.6, 25888.0, 26765.0, 31820.0, 33455.5, 39980.0, 34816.5, 39301.5, 34930.0, 35555.0, 32533.0, 32223.2, 33777.0, 33847.1, 36936.0, 38910.5, 45183.5, 46916.1, 48579.5, 55999.0, 53631.8, 46721.0, 44496.4, 50645.5, 49113.5, 54777.0, 56945.7, 55555.0, 57999.0, 58122.5, 52602.5, 55827.4, 59078.9, 59200.5, 59032.2, 57649.0, 59645.3, 62124.2, 60754.2, 57111.0, 50952.0, 52999.0, 52892.8, 56889.8, 57011.0, 59621.5, 56444.0, 50163.0, 43262.0, 41666.0, 33666.0, 38513.0, 34056.6, 35982.9, 36840.3, 34088.5, 36695.0, 37670.6, 38333.0, 35659.5, 32444.8, 32247.8, 34458.9, 33103.8, 35256.5, 33777.0, 33086.5, 32293.6, 31696.5, 30895.0, 32390.9, 33808.5, 40396.1, 41333.8, 38331.0, 42924.8, 46005.1, 44406.6, 47222.0, 44893.2, 49335.0, 48011.0, 48999.0, 47015.5, 49341.2, 51720.5, 46671.5, 45385.9, 46482.4, 47503.6, 43868.0, 44809.4, 42888.0, 41187.7, 48220.5, 51372.0, 54696.0, 57226.0, 57450.5, 59111.0, 66420.1, 61020.0, 61977.5, 60716.5, 60716.5, 60716.5, 60716.5, 63472.0, 63953.0, 59450.0, 58120.3, 55634.0, 58918.4, 54434.5, 57089.0, 49444.0, 50131.5, 48150.8, 47237.0, 47587.5, 46685.0, 48949.3, 50928.4, 47700.7, 45708.0, 46527.0, 43423.5, 41777.0, 44666.0, 43213.0, 42705.0, 36314.5, 36333.0, 37111.0, 37531.2, 36675.5, 41333.0, 43036.7, 41999.0, 42143.8, 40535.5, 38083.5, 37434.0, 39533.5, 43748.7, 39745.9, 37299.9, 39467.1, 38880.6, 41399.0, 42283.0, 42250.5, 44457.0, 46888.0, 45610.0, 46433.5, 43752.8, 42241.5, 42241.5, 42241.5, 40697.7, 40030.0, 39703.5, 39219.5, 38480.3, 37703.5, 35988.0, 30392.5, 28595.2, 30991.0, 28840.5, 29254.0, 29254.0, 29254.0, 29254.0, 29254.0, 29254.0, 30112.2, 29291.0, 22167.5, 20494.2, 20057.5, 20834.0, 20999.0, 20194.8, 19221.0, 20379.7, 21787.8, 19970.0, 20592.6, 21026.4, 23657.3, 22278.0, 20922.5, 23894.4, 22958.4, 22454.2, 23160.1, 23641.2, 24406.8, 23923.5, 21330.5, 21046.9, 21598.8, 19974.1, 20232.0, 19709.6, 18816.2, 21302.3, 22424.8, 19786.3, 19725.3, 18555.0, 18927.0, 18927.0, 19487.3, 19536.0, 20010.7, 19471.4, 19138.4, 19101.6, 19429.5, 19177.5, 19370.5, 20176.0, 20654.9, 20219.0, 21334.9, 18277.1, 16845.5, 16236.6, 16609.9, 16498.0, 16458.7, 16482.0, 16422.8, 17093.5, 16970.5, 17190.0, 17181.2, 17795.0, 16701.8, 16995.5, 16846.9, 16842.7, 16606.5, 16599.6, 16855.0, 16940.5, 17429.2, 19357.7, 21313.6, 21146.5, 22524.0, 23800.0, 23043.4, 23167.5, 23313.0, 23030.3, 22032.1, 21765.0, 22463.0, 24622.0, 24173.5, 23188.8, 23111.0, 23470.2, 22405.5, 21733.0, 20403.0, 24815.5, 27305.0, 28192.0, 28435.2, 27518.5, 28406.4, 28516.5, 28516.5, 28516.5, 29179.8, 30365.5, 30331.5, 29243.9, 27830.0, 28222.0, 29236.5, 27658.0, 28899.4, 28780.5, 28780.5, 26858.7, 26935.6, 26839.7, 26860.5, 26468.9, 28120.0, 27009.0, 27110.1, 27091.0, 26401.8, 25677.0, 25437.1, 26448.5, 30122.8, 30640.6, 30319.0, 30368.8, 31259.5, 30181.0, 30249.9, 30736.5, 30253.5, 29716.5, 29873.7, 29104.0, 29104.0, 29326.0, 28838.5, 28838.5, 29801.0, 29359.8, 29324.5, 26609.0, 26138.9, 26630.1, 26027.3, 27555.0, 25630.8, 25884.3, 26227.5, 25790.2, 26221.5, 26541.0, 27194.9, 26542.7, 26330.2, 27102.0, 28172.5, 27619.9, 27881.3, 27400.4, 27049.5, 28382.0, 28625.5, 29856.0, 34757.1, 34120.3, 34543.8, 34544.9, 35066.3, 36480.3, 37115.7, 37516.2, 36699.3, 36986.9, 37778.7, 36893.1, 37758.4, 39999.0, 43989.3, 43947.9, 41150.5, 41974.5, 42606.5, 43880.0, 42666.0, 43175.6, 42142.5, 45061.1, 43629.6, 47019.0, 46693.8, 42642.6, 42579.6, 41612.8, 39118.4, 41818.5, 42994.3, 42890.0, 42524.0, 44045.0, 47999.0, 49053.4, 51766.2, 51827.3, 51991.5, 51821.0, 60997.4, 62246.0, 61482.3, 69402.5, 72002.8, 69294.0, 68888.0, 68062.0, 64880.0, 69429.0, 69695.9, 69697.9, 68472.5, 69070.9, 71111.0, 62370.5, 62767.1, 64334.7, 66630.0, 64709.2, 63717.5, 57076.0, 63583.0, 62666.0, 60676.6, 63186.3, 65149.7, 66050.9, 69579.6, 69149.5, 68362.9, 67600.1, 69218.0, 70461.3, 69706.2, 68333.0, 65887.5, 64387.5, 64206.4, 58777.0, 61358.1, 62691.0, 59329.5, 58222.0, 57889.3, 57603.8, 64675.0, 63519.0, 67911.0, 65643.9, 68285.5, 65875.3, 62000.0, 53531.4, 62222.0, 59641.5, 58929.7, 59491.2, 59500.7, 64108.8, 64108.8, 58723.7, 58522.1, 58075.1, 54411.6, 57705.3, 60666.0, 57914.8, 63274.2, 63159.8, 63174.4, 65734.0, 61708.2, 62381.2, 62222.0, 59664.6, 62710.9, 67735.6, 68175.2, 67433.1, 65532.1, 69583.4, 69966.6, 68777.0, 75908.6, 76239.6, 89999.0, 90400.1, 90682.3, 97906.3, 96370.8, 96758.3, 97059.4, 96222.0, 101616.6, 94111.0, 99500.6, 104901.8, 100111.0, 97222.0, 97570.7, 94605.7, 94273.0, 97229.3, 98566.5, 95111.0, 94204.0, 96488.4, 105908.1, 102065.4, 103333.0, 105066.2, 103548.2, 101653.2, 96855.9, 95600.0, 97394.1, 96627.0, 96333.0, 96199.8, 96637.9, 88836.5, 84479.1, 85230.2, 90499.0, 80238.2, 83676.4, 84306.0, 82288.2, 83928.2, 87111.0, 87444.0, 82536.4, 82666.0, 83444.0, 76284.9, 83808.7, 84893.1, 84860.7, 84640.8, 93514.5, 94350.2, 95319.6, 96683.4, 95099.0, 102768.7, 104445.5, 103307.7, 103181.2, 107043.6, 106897.9, 109160.1, 105311.5, 105172.7, 104959.6, 105785.5, 109548.0, 105139.7, 107111.0, 104302.8, 98419.0, 107111.0, 107280.3, 105222.0, 107503.2, 108039.7, 116684.7, 118997.8, 119322.3, 118082.1, 119359.3, 116744.0, 118070.4, 116787.4, 114325.5, 115293.4, 116579.4, 119682.4, 117000.4, 116357.3, 112150.5, 112577.1, 112099.5, 108520.0, 111222.0, 111632.8, 112070.4, 114459.8, 115683.5, 115674.0, 115774.5, 111671.6, 109264.0, 114382.2, 120954.7, 122631.9, 123483.0, 110144.5, 112698.1, 107398.1, 110875.0, 110253.9, 113605.7, 110649.0, 110269.8, 99613.7, 103333.0, 106191.2, 98651.8, 93037.2, 91012.8, 84572.4, 86851.6, 91171.6, 85027.8, 91995.9, 91429.1, 93819.0, 90212.2, 87596.2, 87785.7, 88048.1, 88102.3, 87469.1, 87421.8, 90084.1, 93594.8, 90235.0, 91796.7, 95476.2, 94254.4, 90270.8, 89201.5, 88296.4, 84112.8, 78296.0, 62222.0, 71383.8, 67555.2, 69811.4, 67748.1, 67632.6, 64279.5, 67594.0, 67179.8, 73674.2, 67085.9, 70053.4, 71165.1, 73979.3, 70252.9, 68192.0, 70850.8, 66867.9, 67809.9, 66878.4, 69765.4, 72126.3, 71122.1, 75054.0];
+const sma = [null, null, null, null, null, null, null, null, null, null, 8857.203225806452, 8920.611764705882, 8985.086486486487, 9041.24, 9074.006976744186, 9097.278260869565, 9114.685714285713, 9125.81923076923, 9146.287272727273, 9148.336206896553, 9148.57868852459, 9149.2140625, 9149.332835820896, 9155.407142857142, 9158.946575342465, 9161.5, 9161.075949367088, 9164.49268292683, 9177.257647058825, 9209.165909090909, 9270.785714285714, 9335.75744680851, 9397.687628865979, 9465.469000000001, 9527.363106796116, 9586.451886792453, 9652.999082568807, 9710.541071428572, 9760.133913043477, 9804.966949152544, 9844.953719008263, 9891.447580645161, 9911.211023622047, 9916.423076923076, 9922.825563909775, 9932.663235294118, 9950.425899280575, 9971.938028169014, 9984.832413793103, 9993.436486486487, 10007.778807947021, 10020.960389610389, 10031.964968152866, 10043.353125, 10062.20245398773, 10086.92409638554, 10110.18402366864, 10134.533720930232, 10177.913142857144, 10226.146629213483, 10277.183977900553, 10332.24402173913, 10387.421925133689, 10460.996842105264, 10533.362176165803, 10614.357653061224, 10696.450753768846, 10797.738613861387, 10909.509268292682, 11022.616826923077, 11125.141904761904, 11262.221904761906, 11404.519999999999, 11547.422857142856, 11692.18380952381, 11833.243333333334, 11988.138095238095, 12177.914761904762, 12384.158571428572, 12585.249047619049, 12812.00142857143, 13058.53761904762, 13347.707142857143, 13676.412857142856, 14086.466666666667, 14495.746190476191, 14890.261428571428, 15266.978095238095, 15648.569523809525, 15979.23380952381, 16308.692857142858, 16643.580476190476, 16993.864761904762, 17383.790476190476, 17804.61380952381, 18317.550476190478, 18863.60238095238, 19427.774285714288, 20053.15428571429, 20712.24142857143, 21238.36095238095, 21719.940476190477, 22261.05, 22791.70857142857, 23374.963333333333, 24016.69523809524, 24680.71476190476, 25339.87571428571, 26008.489523809523, 26612.51714285714, 27221.696190476192, 27869.826190476186, 28558.439523809524, 29242.58238095238, 29916.31095238095, 30613.662380952384, 31341.983809523812, 32071.245714285717, 32730.990952380955, 33341.29666666667, 33904.08714285714, 34522.64380952381, 35189.184285714284, 35834.78666666666, 36499.69333333333, 37146.45333333333, 37696.47761904762, 38172.065714285716, 38569.27523809524, 38880.71238095238, 39237.40333333333, 39555.98761904762, 39878.19333333333, 40202.678095238094, 40486.182857142856, 40767.96476190477, 41069.70285714285, 41381.43047619047, 41637.46857142857, 41848.31428571429, 42076.579047619045, 42292.712857142855, 42517.444761904764, 42740.41142857143, 42960.90761904762, 43173.76476190476, 43371.82904761905, 43512.362380952385, 43629.135714285716, 43743.15714285714, 43863.87761904762, 44032.52285714285, 44192.46952380952, 44279.614285714284, 44321.28619047619, 44414.24428571429, 44533.416666666664, 44699.014285714286, 44828.19904761905, 45059.96000000001, 45297.36, 45520.270000000004, 45728.29571428571, 45895.22714285715, 46064.379523809526, 46110.80428571429, 46083.12714285715, 46040.5180952381, 45960.19142857142, 45820.97857142857, 45748.89619047619, 45716.6219047619, 45609.2819047619, 45575.78476190475, 45534.71047619047, 45508.08666666666, 45470.58, 45458.08476190476, 45495.51952380952, 45641.68095238095, 45749.81238095239, 45815.94904761905, 45833.88857142858, 45872.30904761905, 45920.24095238096, 45942.142380952384, 45940.66857142857, 45973.69333333333, 46057.27285714285, 46133.8819047619, 46250.304761904765, 46307.11000000001, 46266.82142857143, 46272.25, 46212.588571428576, 46118.386190476194, 46105.352857142854, 46160.12333333334, 46272.169523809534, 46439.47857142857, 46584.37142857143, 46797.48238095237, 46992.997142857144, 47114.97666666666, 47286.03571428572, 47406.29523809524, 47468.84714285714, 47522.2361904762, 47615.90666666667, 47747.67523809523, 47839.57952380952, 47874.167619047614, 47900.225238095234, 47945.69285714286, 48000.95714285714, 48100.09285714286, 48243.277619047614, 48410.701428571425, 48561.94142857142, 48733.01666666667, 48814.10523809524, 48799.107142857145, 48768.841428571424, 48801.41142857143, 48817.21523809523, 48726.09857142857, 48650.20285714285, 48530.73857142857, 48459.369523809524, 48360.84, 48257.03666666666, 48190.93095238095, 48159.6619047619, 48136.69952380952, 48065.96619047618, 48018.16857142857, 47980.40904761904, 47930.08952380952, 47852.398095238095, 47772.159523809525, 47744.12047619048, 47701.131428571425, 47670.58904761905, 47561.92238095238, 47396.775238095244, 47149.80666666667, 46830.933333333334, 46428.36047619047, 45993.10571428571, 45499.34857142857, 45040.14428571428, 44575.696190476185, 44133.79904761904, 43684.334761904756, 43234.870476190474, 42785.406190476184, 42335.33666666666, 41838.037142857145, 41281.71238095239, 40750.803809523815, 40194.403809523814, 39660.75, 39187.10238095238, 38675.84380952381, 38184.37, 37752.54, 37355.904761904756, 36958.7019047619, 36552.37666666667, 36189.1319047619, 35829.39571428572, 35427.00619047619, 35021.909523809525, 34696.013333333336, 34362.380952380954, 34060.50714285715, 33796.75666666667, 33517.80619047619, 33251.50095238096, 32984.781904761905, 32737.851428571426, 32525.951904761903, 32310.83476190476, 32057.876666666663, 31804.318095238094, 31514.54333333333, 31176.47857142857, 30835.933809523813, 30546.53714285714, 30217.683333333334, 29937.268095238098, 29672.42047619048, 29385.158571428576, 29068.069523809525, 28743.02142857143, 28473.076666666668, 28188.41476190476, 27912.809523809523, 27610.735714285714, 27290.06238095238, 26974.004761904762, 26624.712857142855, 26243.744761904763, 25867.08476190476, 25511.396190476193, 25159.311904761904, 24846.74142857143, 24529.434285714287, 24169.25, 23823.1, 23476.886190476187, 23145.90666666667, 22812.289999999997, 22493.26142857143, 22184.49761904762, 21894.45047619048, 21658.92761904762, 21490.631428571432, 21299.204761904763, 21129.05857142857, 20950.789047619048, 20772.42285714286, 20595.71523809524, 20418.198571428573, 20237.810476190476, 20056.968571428573, 19865.715714285714, 19685.22619047619, 19592.170476190477, 19553.13380952381, 19577.136666666665, 19583.66476190476, 19605.724285714285, 19642.94095238095, 19700.448095238095, 19746.578095238096, 19778.75238095238, 19811.49952380952, 19852.928095238098, 19861.639523809525, 19843.00523809524, 19865.377142857145, 19905.99619047619, 19908.966666666667, 19903.426666666666, 19910.25333333333, 19898.463333333333, 19877.604285714286, 19818.47142857143, 19813.450476190475, 19854.975714285712, 19947.846666666665, 20036.150476190476, 20138.04714285714, 20245.364285714284, 20369.42238095238, 20498.679047619047, 20622.040476190476, 20719.289047619048, 20861.10714285714, 21011.929523809526, 21163.405714285716, 21288.948571428573, 21414.920952380955, 21550.37190476191, 21684.617142857147, 21809.71619047619, 21944.49761904762, 22082.58476190476, 22190.748095238094, 22299.882380952386, 22412.189523809524, 22519.075238095236, 22609.65333333333, 22702.845238095237, 22803.621428571427, 22891.722380952382, 22985.53714285714, 23120.545238095237, 23250.27619047619, 23375.135714285716, 23515.849523809524, 23688.451904761907, 23889.47904761905, 24089.031904761905, 24275.08380952381, 24471.643333333337, 24662.09857142857, 24848.03, 25036.21476190476, 25227.724285714285, 25416.139523809525, 25601.950952380954, 25785.559047619045, 25963.804285714283, 26144.617619047614, 26318.974285714285, 26489.76, 26663.364285714284, 26817.512857142858, 26937.39714285714, 27040.544761904763, 27087.40904761905, 27131.879999999997, 27174.199523809526, 27223.3780952381, 27264.126190476192, 27303.969047619048, 27348.06095238095, 27406.815238095238, 27461.630476190472, 27494.05380952381, 27527.161904761906, 27569.946666666667, 27615.064285714285, 27661.039523809523, 27733.908571428572, 27812.93380952381, 27923.19761904762, 27979.411428571428, 27999.328095238096, 27996.570952380953, 28006.275714285715, 28044.700952380954, 28144.988095238095, 28224.07285714286, 28309.797142857144, 28403.67428571429, 28496.776666666665, 28581.258095238096, 28678.219523809523, 28778.35666666667, 28902.3780952381, 29037.200476190475, 29158.448095238095, 29282.836666666666, 29412.433809523813, 29560.234761904765, 29771.717142857146, 30016.23, 30227.065238095234, 30452.97428571429, 30670.9019047619, 30909.19904761905, 31139.760000000002, 31361.78, 31579.155714285716, 31824.373809523808, 32069.95904761905, 32346.16904761905, 32647.55333333333, 32876.93, 33085.5919047619, 33241.788095238095, 33382.7219047619, 33531.577142857146, 33695.858095238094, 33875.886190476194, 34056.54714285715, 34236.63285714286, 34472.71571428571, 34744.24380952381, 35056.68761904762, 35373.9980952381, 35698.33666666667, 36015.03047619048, 36425.08666666667, 36896.91523809524, 37395.25904761905, 37941.88428571429, 38521.38904761905, 39134.886666666665, 39729.810476190476, 40301.043333333335, 40847.88333333333, 41460.54523809524, 42080.25476190476, 42713.276666666665, 43297.70142857143, 43908.55333333334, 44549.27, 45121.078571428574, 45644.20714285714, 46149.79666666667, 46706.99285714285, 47257.12476190476, 47774.76333333333, 48243.19047619047, 48732.41761904762, 49240.11571428572, 49733.66571428571, 50225.31904761905, 50736.99523809524, 51262.13666666667, 51764.05904761904, 52254.07476190477, 52743.968571428566, 53211.56857142857, 53683.05476190475, 54179.5319047619, 54641.68047619047, 55094.86238095238, 55517.46857142857, 55926.94238095238, 56316.01571428572, 56668.52095238095, 57004.439047619046, 57316.142380952384, 57571.481428571424, 57767.95952380952, 57986.922857142854, 58196.315238095245, 58472.7819047619, 58774.99904761905, 59118.48666666667, 59454.0919047619, 59806.981428571424, 60140.33904761905, 60424.35142857143, 60604.27952380952, 60767.67476190476, 61024.41714285714, 61263.323333333334, 61506.29761904762, 61780.46904761904, 62087.252380952385, 62398.64476190476, 62638.722380952386, 62865.53476190475, 63077.48952380952, 63187.906190476184, 63296.15904761905, 63398.393809523805, 63503.23809523809, 63643.75476190476, 63810.11238095238, 63895.24095238095, 63945.41857142856, 63938.158571428576, 63845.98380952381, 63735.748571428565, 63588.91904761905, 63519.96523809525, 63530.49571428571, 63582.02333333334, 63561.66142857143, 63521.032380952376, 63492.10952380952, 63560.10904761905, 63568.999523809514, 63577.03619047619, 63720.68428571429, 64047.30714285714, 64430.07380952381, 64786.58523809524, 65216.030952380956, 65703.30047619049, 66176.6180952381, 66666.81, 67143.71761904762, 67650.61476190477, 68175.60714285714, 68670.6161904762, 69184.02952380951, 69676.27476190477, 70081.68428571428, 70453.89571428573, 70863.76476190476, 71233.50523809524, 71583.67571428571, 71997.22761904763, 72421.32571428572, 72817.83, 73226.59428571428, 73761.07714285715, 74332.85952380953, 74954.99857142857, 75584.78761904762, 76165.49857142857, 76816.35523809523, 77406.58238095239, 77958.46238095238, 78460.91380952382, 78922.41952380953, 79349.1619047619, 79767.66476190477, 80194.00238095238, 80552.17190476191, 80850.04571428572, 81287.01190476191, 81740.95761904762, 82078.25095238094, 82396.33952380953, 82746.20714285714, 83087.41904761904, 83415.49142857142, 83722.79904761905, 84117.11666666667, 84463.96714285715, 84823.37142857142, 85229.93761904762, 85526.99428571429, 85860.72809523811, 86222.94952380954, 86546.4857142857, 86856.31714285714, 87245.23714285715, 87660.8461904762, 88102.68571428572, 88596.21476190478, 89068.23809523809, 89605.21476190475, 90186.58238095239, 90707.56190476191, 91215.56190476191, 91763.9119047619, 92364.77476190476, 92941.57142857143, 93453.9919047619, 93962.8423809524, 94449.1719047619, 94833.64333333333, 95155.32190476189, 95404.56619047618, 95628.14714285714, 95757.19714285714, 95803.58666666667, 95980.07619047619, 96133.04333333333, 96283.47857142857, 96453.72666666665, 96595.13857142857, 96787.62, 97010.8819047619, 97215.7, 97530.5819047619, 97862.92666666668, 98170.78904761907, 98518.81428571428, 98830.77190476189, 99042.7319047619, 99278.31285714285, 99608.76571428572, 99961.42809523811, 100206.5580952381, 100422.80428571427, 100539.85571428572, 100675.4038095238, 100808.24476190477, 100897.46571428572, 101059.06904761905, 101272.55380952382, 101479.64095238096, 101713.27047619048, 101982.31238095237, 102270.42047619048, 102547.42238095238, 102847.0319047619, 103221.52714285714, 103552.40666666668, 103950.92095238094, 104499.60952380953, 105094.6938095238, 105550.40047619048, 105994.28095238096, 106337.44714285714, 106671.27904761904, 106979.47571428571, 107393.29238095238, 107818.45714285714, 108186.01476190476, 108590.09047619048, 108884.73714285714, 109166.61666666667, 109404.1557142857, 109540.60523809525, 109555.52428571427, 109428.0638095238, 109329.79142857144, 109262.90095238095, 109174.18571428572, 109088.69476190477, 108896.72999999998, 108744.58476190477, 108558.36095238096, 108285.46047619048, 107959.08952380953, 107668.65619047618, 107388.35476190476, 107140.20666666667, 106888.64380952381, 106686.7961904762, 106460.85809523812, 106238.08333333333, 106023.91142857145, 105913.90476190476, 105826.2480952381, 105600.65333333334, 105350.23523809524, 105070.88, 104741.39904761905, 104293.97, 103692.20904761906, 103009.06476190475, 102303.52000000002, 101580.42809523811, 100863.80285714284, 100133.48047619047, 99394.6619047619, 98679.79952380953, 98009.15333333334, 97363.18285714285, 96675.33571428571, 95947.70999999999, 95254.93952380953, 94609.66095238096, 94020.50714285714, 93367.4361904762, 92779.95, 92175.01904761905, 91561.73047619048, 90937.35380952382, 90323.01476190476, 89733.86523809524, 89113.90619047619, 88518.22380952381];
+const states = ["INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "INSUFFICIENT_DATA", "IMBALANCE_FORMING", "INVALID", "INVALID", "QUIET", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_FORMING", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "INVALID", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "INVALID", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "IMBALANCE_FORMING", "INVALID", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_FORMING", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "INVALID", "IMBALANCE_FORMING", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "QUIET", "EXTENDED", "EXTENDED", "EXTENDED", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "INVALID", "INVALID", "INVALID", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "IMBALANCE_FORMING", "QUIET", "EXTENDED", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "INVALID", "EXTENDED", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "EXTENDED", "EXTENDED", "INVALID", "QUIET", "QUIET", "EXTENDED", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "IMBALANCE_CONFIRMED", "INVALID", "IMBALANCE_FORMING", "INVALID", "INVALID", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "QUIET", "QUIET", "INVALID", "INVALID", "QUIET", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_FORMING", "INVALID", "INVALID", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "QUIET", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "QUIET", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "EXTENDED", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "IMBALANCE_FORMING", "QUIET", "QUIET", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_CONFIRMED", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_FORMING", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "IMBALANCE_FORMING", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "QUIET", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID", "INVALID"];
+
+const stateColors = {"IMBALANCE_CONFIRMED": "#00ff88", "IMBALANCE_FORMING": "#ffaa00", "QUIET": "#4488ff", "EXTENDED": "#ff6600", "INVALID": "#333333", "INSUFFICIENT_DATA": "#1a1a1a"};
+
+// State timeline
+const allColors = ["#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#1a1a1a", "#333333", "#ffaa00", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#00ff88", "#00ff88", "#00ff88", "#00ff88", "#ffaa00", "#333333", "#00ff88", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#ffaa00", "#333333", "#333333", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#ffaa00", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#ff6600", "#333333", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#333333", "#333333", "#333333", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#ffaa00", "#00ff88", "#333333", "#333333", "#333333", "#ffaa00", "#00ff88", "#333333", "#333333", "#333333", "#ff6600", "#ff6600", "#333333", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#333333", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#ff6600", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#00ff88", "#333333", "#333333", "#333333", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#ffaa00", "#333333", "#333333", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#ff6600", "#4488ff", "#4488ff", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#00ff88", "#ffaa00", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#ffaa00", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#ffaa00", "#ff6600", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ff6600", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ff6600", "#4488ff", "#4488ff", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#333333", "#ff6600", "#333333", "#ff6600", "#ff6600", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#333333", "#333333", "#ff6600", "#ff6600", "#ff6600", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ff6600", "#4488ff", "#ff6600", "#ff6600", "#4488ff", "#ff6600", "#ff6600", "#ff6600", "#333333", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#00ff88", "#ffaa00", "#333333", "#333333", "#00ff88", "#333333", "#ffaa00", "#ffaa00", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#4488ff", "#ffaa00", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#ffaa00", "#4488ff", "#00ff88", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#ff6600", "#4488ff", "#4488ff", "#4488ff", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#ff6600", "#4488ff", "#ff6600", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#00ff88", "#ffaa00", "#333333", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#4488ff", "#ffaa00", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#ffaa00", "#ffaa00", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#00ff88", "#ffaa00", "#4488ff", "#ffaa00", "#ffaa00", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#ffaa00", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#00ff88", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#ffaa00", "#00ff88", "#4488ff", "#4488ff", "#ffaa00", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#4488ff", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333", "#333333"];
+const timeline = document.getElementById('stateTimeline');
+allColors.forEach(c => {
+  const block = document.createElement('div');
+  block.className = 'state-block';
+  block.style.backgroundColor = c;
+  block.style.flex = '1';
+  timeline.appendChild(block);
+});
+
+// Price chart
+const priceCtx = document.getElementById('priceChart').getContext('2d');
+
+// Create background colors based on state
+const bgColors = states.map(s => {
+  const c = stateColors[s] || '#333';
+  return c + '15';
+});
+
+// Entry markers
+const entryMarkers = [{"date": "2020-05-01", "price": 8784.264705882353, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 35332.0}, {"date": "2020-05-02", "price": 8821.083333333334, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 7664.0}, {"date": "2020-05-04", "price": 8610.75, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 18776.0}, {"date": "2020-05-05", "price": 8876.625, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 22220.0}, {"date": "2020-05-10", "price": 8546.115384615385, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 109452.0}, {"date": "2020-05-21", "price": 8911.416666666666, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 8555.0}, {"date": "2020-05-23", "price": 9097.333333333334, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 16665.0}, {"date": "2020-05-24", "price": 8885.78947368421, "alignment": "NO_MATCH", "significant": false, "state": "INSUFFICIENT_DATA", "qty": 126545.0}, {"date": "2020-05-30", "price": 9417.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "INVALID", "qty": 5555.0}, {"date": "2020-05-31", "price": 9500.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "IMBALANCE_FORMING", "qty": 27775.0}, {"date": "2020-06-02", "price": 9186.941176470587, "alignment": "PARTIAL_MATCH", "significant": false, "state": "INVALID", "qty": 2329.0}, {"date": "2020-06-03", "price": 9621.0, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 2445.0}, {"date": "2020-06-05", "price": 9663.833333333334, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 22665.0}, {"date": "2020-06-06", "price": 9572.0, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 38220.0}, {"date": "2020-06-07", "price": 9444.611111111111, "alignment": "PARTIAL_MATCH", "significant": false, "state": "INVALID", "qty": 45775.0}, {"date": "2020-06-15", "price": 9073.346153846154, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 26217.0}, {"date": "2020-06-17", "price": 9308.5, "alignment": "PARTIAL_MATCH", "significant": false, "state": "INVALID", "qty": 58664.0}, {"date": "2020-06-20", "price": 9187.5, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 28888.0}, {"date": "2020-06-22", "price": 9417.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 195010.0}, {"date": "2020-06-24", "price": 9529.522054545454, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 128330.0}, {"date": "2020-06-25", "price": 9153.166666666666, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 58998.0}, {"date": "2020-06-26", "price": 9100.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 29666.0}, {"date": "2020-06-28", "price": 8990.5, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 66332.0}, {"date": "2020-06-30", "price": 9102.333333333334, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 79698.0}, {"date": "2020-07-06", "price": 9146.75, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 273501.0}, {"date": "2020-07-08", "price": 9297.111111111111, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 289994.0}, {"date": "2020-07-10", "price": 9215.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 136666.0}, {"date": "2020-07-11", "price": 9281.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 111131.0}, {"date": "2020-07-13", "price": 9253.375, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 35552.0}, {"date": "2020-07-17", "price": 9165.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 136666.0}, {"date": "2020-07-18", "price": 9170.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 149666.0}, {"date": "2020-07-20", "price": 9188.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 49662.0}, {"date": "2020-07-21", "price": 9336.1, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 33330.0}, {"date": "2020-07-22", "price": 9314.25, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 26664.0}, {"date": "2020-07-25", "price": 9694.5, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "IMBALANCE_CONFIRMED", "qty": 13332.0}, {"date": "2020-07-26", "price": 9874.5, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "IMBALANCE_CONFIRMED", "qty": 19662.0}, {"date": "2020-07-28", "price": 10828.8, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "IMBALANCE_CONFIRMED", "qty": 28997.0}, {"date": "2020-07-30", "price": 10993.857142857143, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "INVALID", "qty": 27658.0}, {"date": "2020-07-31", "price": 10984.0, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "IMBALANCE_CONFIRMED", "qty": 3666.0}, {"date": "2020-08-02", "price": 10819.690476190477, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "INVALID", "qty": 30922.0}, {"date": "2020-08-04", "price": 11057.3, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 15132.0}, {"date": "2020-08-08", "price": 11678.166666666666, "alignment": "PARTIAL_MATCH", "significant": false, "state": "INVALID", "qty": 45777.0}, {"date": "2020-08-09", "price": 11685.1, "alignment": "PARTIAL_MATCH", "significant": false, "state": "INVALID", "qty": 21776.0}, {"date": "2020-08-12", "price": 11291.833333333334, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 3296.0}, {"date": "2020-08-13", "price": 11425.85, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 55550.0}, {"date": "2020-08-16", "price": 11875.5, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "QUIET", "qty": 26665.0}, {"date": "2020-08-19", "price": 11636.875, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "QUIET", "qty": 23658.0}, {"date": "2020-08-22", "price": 11422.875, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 5222.0}, {"date": "2020-08-23", "price": 11614.5, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 10000.0}, {"date": "2020-08-25", "price": 11323.886363636364, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 121085.0}, {"date": "2020-08-27", "price": 11231.09677419355, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 32652.0}, {"date": "2020-08-28", "price": 11487.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 9332.0}, {"date": "2020-08-29", "price": 11488.5, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 17998.0}, {"date": "2020-08-30", "price": 11654.277777777777, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 48913.0}, {"date": "2020-09-01", "price": 11851.55, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 58660.0}, {"date": "2020-09-02", "price": 11471.481481481482, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 255650.0}, {"date": "2020-09-05", "price": 10037.82142857143, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 32996.0}, {"date": "2020-09-08", "price": 10042.833333333334, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 17993.0}, {"date": "2020-09-12", "price": 10362.5, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 2999.0}, {"date": "2020-09-13", "price": 10281.25, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 59988.0}, {"date": "2020-09-17", "price": 10907.5, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 17997.0}, {"date": "2020-09-21", "price": 10399.944444444445, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 69997.0}, {"date": "2020-09-23", "price": 10320.537735849057, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 118555.0}, {"date": "2020-09-25", "price": 10732.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 58555.0}, {"date": "2020-09-28", "price": 10846.16, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 325320.0}, {"date": "2020-10-01", "price": 10559.76304225352, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 213334.0}, {"date": "2020-10-02", "price": 10477.305986842106, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 1988.0}, {"date": "2020-10-04", "price": 10617.75, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 182454.0}, {"date": "2020-10-06", "price": 10635.5, "alignment": "PARTIAL_MATCH", "significant": true, "state": "QUIET", "qty": 349542.0}, {"date": "2020-10-10", "price": 11288.0, "alignment": "PARTIAL_MATCH", "significant": false, "state": "IMBALANCE_FORMING", "qty": 37560.0}, {"date": "2020-10-11", "price": 11365.6, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 13333.0}, {"date": "2020-10-13", "price": 11401.357142857143, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 93331.0}, {"date": "2020-10-14", "price": 11346.416666666666, "alignment": "PARTIAL_MATCH", "significant": false, "state": "QUIET", "qty": 79998.0}, {"date": "2020-10-15", "price": 11355.23762, "alignment": "PARTIAL_MATCH", "significant": true, "state": "QUIET", "qty": 366670.0}, {"date": "2020-10-18", "price": 11434.086608333333, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "QUIET", "qty": 331108.0}, {"date": "2020-10-23", "price": 12837.875, "alignment": "CONFIRMED_MATCH", "significant": false, "state": "INVALID", "qty": 53944.0}, {"date": "2020-10-25", "price": 12980.0, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 27972.0}, {"date": "2020-10-26", "price": 13054.363636363636, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 47430.0}, {"date": "2020-10-28", "price": 13479.3297, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 110070.0}, {"date": "2020-10-30", "price": 13425.7621, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 442753.0}, {"date": "2020-11-03", "price": 13800.545454545454, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 105618.0}, {"date": "2020-11-04", "price": 13976.049733333333, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 344015.0}, {"date": "2020-11-06", "price": 15788.841049999999, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 261664.0}, {"date": "2020-11-07", "price": 14914.85143, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 165999.0}, {"date": "2020-11-08", "price": 14751.5, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 3333.0}, {"date": "2020-11-10", "price": 15330.611111111111, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 81176.0}, {"date": "2020-11-11", "price": 15439.714285714286, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 214248.0}, {"date": "2020-11-15", "price": 16063.555555555555, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 124706.0}, {"date": "2020-11-17", "price": 17344.166666666668, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 90392.0}, {"date": "2020-11-21", "price": 18757.5, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 169678.0}, {"date": "2020-11-24", "price": 18824.0, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 209414.0}, {"date": "2020-11-26", "price": 16936.925138461538, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 315520.0}, {"date": "2020-11-30", "price": 19218.291622222223, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 729696.0}, {"date": "2020-12-02", "price": 18750.617647058825, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 121039.0}, {"date": "2020-12-06", "price": 19052.333333333332, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 20085.0}, {"date": "2020-12-07", "price": 19335.1, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 183001.0}, {"date": "2020-12-09", "price": 17906.916666666668, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 211433.0}, {"date": "2020-12-12", "price": 18768.75, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 1332.0}, {"date": "2020-12-15", "price": 19502.333333333332, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 126664.0}, {"date": "2020-12-18", "price": 22957.1, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 9555.0}, {"date": "2020-12-19", "price": 22952.166666666668, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 5333.0}, {"date": "2020-12-20", "price": 23771.586485714284, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 108441.0}, {"date": "2020-12-22", "price": 22563.25, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 24222.0}, {"date": "2020-12-27", "price": 25998.0, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 6666.0}, {"date": "2021-01-02", "price": 31402.38313636364, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 34104.0}, {"date": "2021-01-03", "price": 33239.75, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 16665.0}, {"date": "2021-01-05", "price": 32960.83328620689, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 68124.0}, {"date": "2021-01-06", "price": 34714.5157875, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 112000.0}, {"date": "2021-01-08", "price": 39375.799825, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 204000.0}, {"date": "2021-01-09", "price": 39763.75, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 44222.0}, {"date": "2021-01-11", "price": 33413.80902597403, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 483325.0}, {"date": "2021-01-12", "price": 33942.52713214285, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 465062.0}, {"date": "2021-01-15", "price": 36416.86886431925, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1363239.0}, {"date": "2021-01-16", "price": 36406.66216216216, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 12589.0}, {"date": "2021-01-20", "price": 34257.101672972974, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 542212.0}, {"date": "2021-01-21", "price": 31873.597088235292, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 535544.0}, {"date": "2021-01-22", "price": 30426.271713432834, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 401741.0}, {"date": "2021-01-23", "price": 32378.12006875, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 137775.0}, {"date": "2021-01-24", "price": 31656.243799999997, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 335565.0}, {"date": "2021-01-25", "price": 33153.58297837838, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 471115.0}, {"date": "2021-01-27", "price": 30523.18322162162, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 78628.0}, {"date": "2021-01-28", "price": 32104.10256153846, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 652002.0}, {"date": "2021-01-29", "price": 33742.22870721649, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1142864.0}, {"date": "2021-02-01", "price": 33767.257679999995, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 211818.0}, {"date": "2021-02-03", "price": 36143.7294509434, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 2488826.0}, {"date": "2021-02-06", "price": 40302.9202630137, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 992208.0}, {"date": "2021-02-07", "price": 38278.634460869565, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1874761.0}, {"date": "2021-02-09", "price": 46261.60294117647, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 361108.0}, {"date": "2021-02-10", "price": 45185.58148, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 447299.0}, {"date": "2021-02-11", "price": 44582.625, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 328729.0}, {"date": "2021-02-12", "price": 48044.357671428574, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 363801.0}, {"date": "2021-02-14", "price": 48653.556295652175, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 2891526.0}, {"date": "2021-02-17", "price": 50324.15625, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 953111.0}, {"date": "2021-02-23", "price": 47334.76870802469, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 875339.0}, {"date": "2021-02-25", "price": 47220.617647058825, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1784439.0}, {"date": "2021-02-28", "price": 44125.5, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 333330.0}, {"date": "2021-03-02", "price": 48090.545454545456, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 130451.0}, {"date": "2021-03-04", "price": 49524.44117647059, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 372221.0}, {"date": "2021-03-05", "price": 47558.41157037037, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 331111.0}, {"date": "2021-03-06", "price": 48411.807692307695, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 296664.0}, {"date": "2021-03-07", "price": 50727.72727272727, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 446664.0}, {"date": "2021-03-11", "price": 55942.204545454544, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1116652.0}, {"date": "2021-03-12", "price": 55036.166666666664, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 109998.0}, {"date": "2021-03-13", "price": 58999.0, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 183330.0}, {"date": "2021-03-14", "price": 59552.625, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 146664.0}, {"date": "2021-03-15", "price": 56596.545722222225, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1947763.0}, {"date": "2021-03-18", "price": 58124.931818181816, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 3537764.0}, {"date": "2021-03-21", "price": 57156.0625, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1386666.0}, {"date": "2021-03-23", "price": 54583.96153846154, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 543334.0}, {"date": "2021-03-24", "price": 54596.29927708334, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1295006.0}, {"date": "2021-03-28", "price": 55709.92307692308, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 2650698.0}, {"date": "2021-03-31", "price": 58040.67857142857, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 531104.0}, {"date": "2021-04-02", "price": 58959.958333333336, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1300867.0}, {"date": "2021-04-03", "price": 57674.47222222222, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 535835.0}, {"date": "2021-04-06", "price": 58331.72222222222, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 733330.0}, {"date": "2021-04-09", "price": 58382.38461538462, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1266660.0}, {"date": "2021-04-10", "price": 58411.0, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 499998.0}, {"date": "2021-04-16", "price": 61985.15625, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1066656.0}, {"date": "2021-04-18", "price": 55791.933333333334, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1828556.0}, {"date": "2021-04-21", "price": 56086.875, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 333333.0}, {"date": "2021-04-24", "price": 50226.35622666667, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1433028.0}, {"date": "2021-04-26", "price": 51106.23333333333, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 4222107.0}, {"date": "2021-04-29", "price": 53271.642857142855, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 733328.0}, {"date": "2021-05-02", "price": 56722.166666666664, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1079988.0}, {"date": "2021-05-03", "price": 57384.875, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 366664.0}, {"date": "2021-05-04", "price": 54979.0, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1133326.0}, {"date": "2021-05-06", "price": 57095.305555555555, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 1633321.0}, {"date": "2021-05-07", "price": 57486.833333333336, "alignment": "NO_MATCH", "significant": false, "state": "EXTENDED", "qty": 133332.0}, {"date": "2021-05-09", "price": 57811.617647058825, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 533630.0}, {"date": "2021-05-12", "price": 55873.375, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 3822911.0}, {"date": "2021-05-13", "price": 49151.75485344828, "alignment": "NO_MATCH", "significant": true, "state": "EXTENDED", "qty": 4222222.0}, {"date": "2021-05-16", "price": 46425.25, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 113334.0}, {"date": "2021-05-18", "price": 43399.42474285715, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 488713.0}, {"date": "2021-05-19", "price": 37647.98399487179, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1284772.0}, {"date": "2021-05-21", "price": 36707.833333333336, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 2688875.0}, {"date": "2021-05-23", "price": 34284.714357894736, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1688873.0}, {"date": "2021-05-25", "price": 37615.36363636364, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1033328.0}, {"date": "2021-05-26", "price": 38910.5029, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 133332.0}, {"date": "2021-05-27", "price": 38022.88825, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 1.0}, {"date": "2021-05-29", "price": 34341.5, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 2.0}, {"date": "2021-05-31", "price": 36944.666666666664, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 79668.0}, {"date": "2021-06-02", "price": 37580.0, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 133333.0}, {"date": "2021-06-04", "price": 36590.33888, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 533330.0}, {"date": "2021-06-09", "price": 32985.5, "alignment": "NO_MATCH", "significant": false, "state": "INVALID", "qty": 111100.0}, {"date": "2021-06-10", "price": 37188.98635555556, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 810900.0}, {"date": "2021-06-11", "price": 36937.9885, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 911200.0}, {"date": "2021-06-13", "price": 37367.5978875, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 888800.0}, {"date": "2021-06-16", "price": 39455.32703846154, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 632800.0}, {"date": "2021-06-17", "price": 38341.046357142855, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1040000.0}, {"date": "2021-06-21", "price": 33843.0729, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 961200.0}, {"date": "2021-06-23", "price": 33929.29036666667, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 709900.0}, {"date": "2021-06-24", "price": 34367.90165555556, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1100000.0}, {"date": "2021-06-26", "price": 31649.06082222222, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 370200.0}, {"date": "2021-06-27", "price": 34087.5626, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1030000.0}, {"date": "2021-06-28", "price": 34475.79242222222, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1214100.0}, {"date": "2021-06-30", "price": 34775.27272727273, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1800000.0}, {"date": "2021-07-01", "price": 33701.75, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 1250000.0}, {"date": "2021-07-04", "price": 35386.6875, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 480000.0}, {"date": "2021-07-05", "price": 34242.625, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 870000.0}, {"date": "2021-07-07", "price": 34138.5, "alignment": "NO_MATCH", "significant": true, "state": "INVALID", "qty": 540000.0}];
+const signalMarkers = [{"date": "2020-07-25", "price": 9688.5}, {"date": "2020-07-26", "price": 9873.2}, {"date": "2020-07-27", "price": 10778.0}, {"date": "2020-07-28", "price": 11010.2}, {"date": "2020-07-31", "price": 11331.7}, {"date": "2020-08-01", "price": 11627.5}, {"date": "2020-08-17", "price": 12343.9}, {"date": "2020-10-19", "price": 11694.2}, {"date": "2020-10-21", "price": 13191.0}, {"date": "2021-08-09", "price": 46005.1}, {"date": "2021-08-13", "price": 47810.0}, {"date": "2021-08-20", "price": 49333.0}, {"date": "2021-09-05", "price": 51720.5}, {"date": "2021-10-04", "price": 49369.4}, {"date": "2021-10-06", "price": 55333.0}, {"date": "2021-10-11", "price": 57226.0}, {"date": "2023-01-14", "price": 20793.4}, {"date": "2023-01-20", "price": 22666.0}, {"date": "2023-01-21", "price": 23280.0}, {"date": "2023-01-25", "price": 23800.0}, {"date": "2023-02-17", "price": 24526.9}, {"date": "2023-03-13", "price": 24435.0}, {"date": "2023-05-28", "price": 28120.0}, {"date": "2023-06-20", "price": 27999.4}, {"date": "2023-06-21", "price": 30122.8}, {"date": "2023-06-23", "price": 30910.0}, {"date": "2023-08-08", "price": 29801.0}, {"date": "2023-10-01", "price": 28172.5}, {"date": "2023-10-23", "price": 34888.0}, {"date": "2023-11-01", "price": 35731.0}, {"date": "2024-02-07", "price": 44045.0}, {"date": "2024-07-15", "price": 64675.0}, {"date": "2024-07-19", "price": 67013.0}, {"date": "2024-08-23", "price": 64108.8}, {"date": "2024-09-26", "price": 64746.9}, {"date": "2024-10-15", "price": 66943.8}, {"date": "2024-10-28", "price": 69583.4}, {"date": "2024-10-29", "price": 72098.8}, {"date": "2024-11-06", "price": 75908.6}, {"date": "2024-11-10", "price": 79792.5}, {"date": "2025-04-22", "price": 91522.3}, {"date": "2025-05-01", "price": 96333.0}, {"date": "2025-05-08", "price": 102768.7}, {"date": "2025-05-13", "price": 104845.3}, {"date": "2025-05-18", "price": 106590.1}, {"date": "2025-06-09", "price": 110557.0}, {"date": "2025-07-02", "price": 109111.0}, {"date": "2025-07-09", "price": 111735.2}, {"date": "2025-07-10", "price": 116684.7}, {"date": "2025-08-13", "price": 122784.8}, {"date": "2025-09-10", "price": 113612.8}, {"date": "2025-09-16", "price": 116819.1}, {"date": "2025-10-03", "price": 122765.4}];
+
+new Chart(priceCtx, {
+  type: 'line',
+  data: {
+    labels: dates,
+    datasets: [
+      {
+        label: 'BTC Price',
+        data: prices,
+        borderColor: '#ffffff',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: false,
+        tension: 0.1,
+      },
+      {
+        label: '30W SMA',
+        data: sma,
+        borderColor: '#ff9f1c66',
+        borderWidth: 1,
+        borderDash: [5, 3],
+        pointRadius: 0,
+        fill: false,
+        tension: 0.1,
+      },
+      {
+        label: 'CONFIRMED Signals',
+        data: dates.map((d, i) => states[i] === 'IMBALANCE_CONFIRMED' ? prices[i] : null),
+        borderColor: '#00ff88',
+        backgroundColor: '#00ff8888',
+        pointRadius: 4,
+        pointStyle: 'triangle',
+        showLine: false,
+      },
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { labels: { color: '#888', font: { family: 'JetBrains Mono', size: 10 } } },
+      tooltip: {
+        backgroundColor: '#1a1a2e',
+        borderColor: '#2a2a3a',
+        borderWidth: 1,
+        titleFont: { family: 'JetBrains Mono' },
+        bodyFont: { family: 'JetBrains Mono' },
+      }
+    },
+    scales: {
+      x: {
+        ticks: { color: '#555', maxTicksLimit: 20, font: { family: 'JetBrains Mono', size: 9 } },
+        grid: { color: '#1a1a2a' }
+      },
+      y: {
+        ticks: { color: '#888', callback: v => '$' + v.toLocaleString(), font: { family: 'JetBrains Mono', size: 10 } },
+        grid: { color: '#1a1a2a' }
+      }
+    }
+  }
+});
+
+// Return distribution chart
+const returnData = [{"date": "2020-07-25", "price": 9688.5, "return_7d": 20.01341796975796, "return_30d": 21.248903339010177}, {"date": "2020-07-26", "price": 9873.2, "return_7d": 11.012640278734343, "return_30d": 14.982984240165287}, {"date": "2020-07-27", "price": 10778.0, "return_7d": 3.5999257747262945, "return_30d": 6.429764334755984}, {"date": "2020-07-28", "price": 11010.2, "return_7d": 2.041743110933491, "return_30d": 2.173439174583561}, {"date": "2020-07-31", "price": 11331.7, "return_7d": 2.685387011657556, "return_30d": 3.364896705701698}, {"date": "2020-08-01", "price": 11627.5, "return_7d": 0.8101483551924379, "return_30d": -0.10750376263169212}, {"date": "2020-08-17", "price": 12343.9, "return_7d": -4.833966574583388, "return_30d": -11.01677751764029}, {"date": "2020-10-19", "price": 11694.2, "return_7d": 11.310735236270961, "return_30d": 55.829385507345506}, {"date": "2020-10-21", "price": 13191.0, "return_7d": 0.269122886816769, "return_30d": 41.286483208248036}, {"date": "2021-08-09", "price": 46005.1, "return_7d": -0.04369080819300152, "return_30d": 1.448535053722308}, {"date": "2021-08-13", "price": 47810.0, "return_7d": 3.185526040577285, "return_30d": -3.9736456808199185}, {"date": "2021-08-20", "price": 49333.0, "return_7d": -0.6770316015648754, "return_30d": -3.953742930695478}, {"date": "2021-09-05", "price": 51720.5, "return_7d": -11.234036793921177, "return_30d": -0.6738140582554306}, {"date": "2021-10-04", "price": 49369.4, "return_7d": 15.913906184802729, "return_30d": 22.984075155865778}, {"date": "2021-10-06", "price": 55333.0, "return_7d": 4.333761046753294, "return_30d": 9.729275477563117}, {"date": "2021-10-11", "price": 57226.0, "return_7d": 7.366057386502643, "return_30d": 10.914619229021772}, {"date": "2023-01-14", "price": 20793.4, "return_7d": 11.958602248790474, "return_30d": 3.98732290053574}, {"date": "2023-01-20", "price": 22666.0, "return_7d": 1.7162269478514074, "return_30d": 8.303185387805524}, {"date": "2023-01-21", "price": 23280.0, "return_7d": -1.0163230240549765, "return_30d": 6.4196735395189}, {"date": "2023-01-25", "price": 23800.0, "return_7d": -0.5630252100840336, "return_30d": -2.568067226890759}, {"date": "2023-02-17", "price": 24526.9, "return_7d": -5.455642580187476, "return_30d": 14.029901862852617}, {"date": "2023-03-13", "price": 24435.0, "return_7d": 15.375485983220791, "return_30d": 21.989768774299165}, {"date": "2023-05-28", "price": 28120.0, "return_7d": -3.7162162162162162, "return_30d": 7.820056899004267}, {"date": "2023-06-20", "price": 27999.4, "return_7d": 8.284463238497962, "return_30d": 6.260491296242055}, {"date": "2023-06-21", "price": 30122.8, "return_7d": -0.49563785571062213, "return_30d": -0.8269483580543593}, {"date": "2023-06-23", "price": 30910.0, "return_7d": -1.7508896797153048, "return_30d": -2.6373341960530596}, {"date": "2023-08-08", "price": 29801.0, "return_7d": -2.169390288916479, "return_30d": -11.991208348713132}, {"date": "2023-10-01", "price": 28172.5, "return_7d": -0.8696423817552578, "return_30d": 22.615316354601127}, {"date": "2023-10-23", "price": 34888.0, "return_7d": -1.2689176794313148, "return_30d": 6.901800045861045}, {"date": "2023-11-01", "price": 35731.0, "return_7d": 0.713666004309983, "return_30d": 8.463239204052503}, {"date": "2024-02-07", "price": 44045.0, "return_7d": 17.402202293109326, "return_30d": 57.57180156657964}, {"date": "2024-07-15", "price": 64675.0, "return_7d": 5.509547738693472, "return_30d": -8.883339775802092}, {"date": "2024-07-19", "price": 67013.0, "return_7d": 1.5114977690895708, "return_30d": -10.881023085073041}, {"date": "2024-08-23", "price": 64108.8, "return_7d": -8.399938853948296, "return_30d": -1.4802959968054308}, {"date": "2024-09-26", "price": 64746.9, "return_7d": -5.7329385653985, "return_30d": 3.857945322478762}, {"date": "2024-10-15", "price": 66943.8, "return_7d": 0.7309116004768221, "return_30d": 30.13154317502143}, {"date": "2024-10-28", "price": 69583.4, "return_7d": -2.1290997565511316, "return_30d": 39.05371108626484}, {"date": "2024-10-29", "price": 72098.8, "return_7d": -3.5630274012882444, "return_30d": 31.4543376588792}, {"date": "2024-11-06", "price": 75908.6, "return_7d": 17.389992701749208, "return_30d": 33.867045367718546}, {"date": "2024-11-10", "price": 79792.5, "return_7d": 11.678415891217846, "return_30d": 20.218065607669892}, {"date": "2025-04-22", "price": 91522.3, "return_7d": 4.149043457168365, "return_30d": 21.51453798691684}, {"date": "2025-05-01", "price": 96333.0, "return_7d": 6.68068055598808, "return_30d": 8.741345125761683}, {"date": "2025-05-08", "price": 102768.7, "return_7d": 0.36966508285111005, "return_30d": 2.9355241430513406}, {"date": "2025-05-13", "price": 104845.3, "return_7d": 2.096708197696991, "return_30d": 0.8886426000974742}, {"date": "2025-05-18", "price": 106590.1, "return_7d": 2.0516914797903314, "return_30d": -2.1695260629270448}, {"date": "2025-06-09", "price": 110557.0, "return_7d": -3.1169442007290358, "return_30d": 1.065694619065276}, {"date": "2025-07-02", "price": 109111.0, "return_7d": 2.405073732254307, "return_30d": 3.803832794127076}, {"date": "2025-07-09", "price": 111735.2, "return_7d": 6.790250520874358, "return_30d": 4.248168885006692}, {"date": "2025-07-10", "price": 116684.7, "return_7d": 3.566962935157742, "return_30d": -0.090243193837755}, {"date": "2025-08-13", "price": 122784.8, "return_7d": -6.911849023657648, "return_30d": -4.898977723627026}, {"date": "2025-09-10", "price": 113612.8, "return_7d": 1.8142321991888213, "return_30d": 0.007217496620096582}, {"date": "2025-09-16", "price": 116819.1, "return_7d": -4.406385599615131, "return_30d": -7.343405316425139}, {"date": "2025-10-03", "price": 122765.4, "return_7d": -7.448678536460594, "return_30d": -10.250689526527825}];
+const retCtx = document.getElementById('returnChart').getContext('2d');
+new Chart(retCtx, {
+  type: 'bar',
+  data: {
+    labels: returnData.map(r => r.date.slice(2)),
+    datasets: [{
+      label: '7d Return %',
+      data: returnData.map(r => r.return_7d),
+      backgroundColor: returnData.map(r => r.return_7d > 0 ? '#00ff8866' : '#ff444466'),
+      borderColor: returnData.map(r => r.return_7d > 0 ? '#00ff88' : '#ff4444'),
+      borderWidth: 1,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#555', maxTicksLimit: 10, font: { size: 8 } }, grid: { display: false } },
+      y: { ticks: { color: '#888', callback: v => v + '%', font: { size: 9 } }, grid: { color: '#1a1a2a' } }
+    }
+  }
+});
+
+// Alignment donut
+const alignCtx = document.getElementById('alignmentChart').getContext('2d');
+new Chart(alignCtx, {
+  type: 'doughnut',
+  data: {
+    labels: ['Confirmed Match', 'Partial Match', 'No Match'],
+    datasets: [{
+      data: [75, 307, 434],
+      backgroundColor: ['#00ff8866', '#ffaa0066', '#ff444466'],
+      borderColor: ['#00ff88', '#ffaa00', '#ff4444'],
+      borderWidth: 2,
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { color: '#888', font: { family: 'JetBrains Mono', size: 10 }, padding: 12 } }
+    },
+    cutout: '60%',
+  }
+});
+</script>
+
+</body>
+</html>

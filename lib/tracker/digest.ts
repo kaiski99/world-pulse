@@ -28,7 +28,7 @@ export function generateDigest(
   } else {
     regimeRecap += "No regime changes this week. ";
   }
-  regimeRecap += `Components: Net Liquidity ${regime.components.netLiquidityTrend}/20, DXY ${regime.components.dxyTrend}/20, Real Yields ${regime.components.realYields}/20, HY ${regime.components.hySpread}/20, VIX ${regime.components.vix}/20.`;
+  regimeRecap += `Components: DXY ${regime.components.dxyTrend}/33, Net Liquidity ${regime.components.netLiquidity}/33, Stablecoin Flow ${regime.components.stablecoinFlow}/34.`;
 
   // Setup summary
   const stateTransitions = weekEvents.filter((e) => e.type === "state_transition");
@@ -86,15 +86,17 @@ export function generateDigest(
     );
   }
 
-  const degradedCount = Object.values(currentSnapshot.macro)
-    .flatMap((section) =>
-      typeof section === "object" && section !== null
-        ? Object.values(section).filter(
-            (v: any) => typeof v === "object" && v?.status === "DEGRADED"
-          )
-        : []
-    ).length;
-  if (degradedCount > 3) {
+  const macro: any = currentSnapshot.macro;
+  const degradedCount = [
+    macro.dxy,
+    macro.netLiquidity,
+    macro.stablecoinDelta,
+    macro.us10y,
+    macro.realYield,
+    macro.hySpread,
+    macro.btcDominance,
+  ].filter((v: any) => v?.status === "DEGRADED").length;
+  if (degradedCount > 1) {
     takeaways.push(
       `${degradedCount} data sources degraded. Add FRED_API_KEY and paid API keys for full coverage.`
     );

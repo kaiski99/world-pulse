@@ -31,9 +31,12 @@ function shouldFire(event: TrackerEvent, config: AlertConfig): boolean {
   const alertableTypes = ["regime_flip", "state_transition", "macro_surprise", "disqualifier_appeared"];
   if (!alertableTypes.includes(event.type)) return false;
 
-  // State transitions: only QUIET → IMBALANCE_CONFIRMED
-  if (event.type === "state_transition" && !event.title.includes("IMBALANCE_CONFIRMED")) {
-    return false;
+  // State transitions: alert on CONFIRMED, TREND_RIDE, DIP_BUY entries only
+  if (event.type === "state_transition") {
+    const t = event.title;
+    const alertable =
+      t.includes("IMBALANCE_CONFIRMED") || t.includes("TREND_RIDE") || t.includes("DIP_BUY");
+    if (!alertable) return false;
   }
 
   // Quiet hours

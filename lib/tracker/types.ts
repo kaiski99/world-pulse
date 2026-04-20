@@ -1,4 +1,4 @@
-// ─── Regime Tracker Types ───
+// ─── Regime Tracker Types (V2) ───
 
 export type RegimeLevel = "RISK_ON" | "NEUTRAL" | "RISK_OFF";
 
@@ -6,6 +6,8 @@ export type TokenState =
   | "QUIET"
   | "IMBALANCE_FORMING"
   | "IMBALANCE_CONFIRMED"
+  | "TREND_RIDE"
+  | "DIP_BUY"
   | "EXTENDED"
   | "INVALID";
 
@@ -26,48 +28,32 @@ export interface MacroDataPoint {
   fetchedAt: string;
 }
 
+/**
+ * V2: 3 regime-scored data points + optional context-only fields.
+ * Dropped: equities, commodities, IG spread, global M2, US 2Y, fed funds.
+ */
 export interface MacroSnapshot {
   fetchedAt: string;
 
-  rates: {
-    us2y: MacroDataPoint;
-    us10y: MacroDataPoint;
-    realYield: MacroDataPoint;
-    fedFundsRate: MacroDataPoint;
-  };
+  // Regime-scored (feed the 3-component score)
+  dxy: MacroDataPoint;             // Frankfurter basket proxy
+  netLiquidity: MacroDataPoint;    // FRED: WALCL - RRPONTSYD - WTREGEN
+  stablecoinDelta: MacroDataPoint; // DeFiLlama 24h delta
 
-  fx: {
-    dxy: MacroDataPoint;
-    usdjpy: MacroDataPoint;
-    usdcnh: MacroDataPoint;
-    eurusd: MacroDataPoint;
-  };
+  // Context-only (displayed, not scored)
+  us10y?: MacroDataPoint;
+  realYield?: MacroDataPoint;
+  hySpread?: MacroDataPoint;
+  btcDominance?: MacroDataPoint;
 
-  equities: {
-    spx: MacroDataPoint;
-    ndx: MacroDataPoint;
-    vix: MacroDataPoint;
-    move: MacroDataPoint;
-  };
+  // FRED sub-components for the net-liquidity breakdown
+  fedBalanceSheet?: MacroDataPoint;
+  rrp?: MacroDataPoint;
+  tga?: MacroDataPoint;
 
-  commodities: {
-    gold: MacroDataPoint;
-    wti: MacroDataPoint;
-    copper: MacroDataPoint;
-  };
-
-  credit: {
-    hySpread: MacroDataPoint;
-    igSpread: MacroDataPoint;
-  };
-
-  liquidity: {
-    fedBalanceSheet: MacroDataPoint;
-    rrp: MacroDataPoint;
-    tga: MacroDataPoint;
-    netLiquidity: MacroDataPoint;
-    globalM2: MacroDataPoint;
-  };
+  // FX context
+  usdjpy?: MacroDataPoint;
+  eurusd?: MacroDataPoint;
 }
 
 export interface MacroEvent {
@@ -80,24 +66,22 @@ export interface MacroEvent {
   actual?: string;
 }
 
-// ─── Regime ───
+// ─── Regime (V2: 3 components) ───
 
 export interface RegimeSnapshot {
-  score: number;
+  score: number;     // 0-100
   level: RegimeLevel;
   components: {
-    netLiquidityTrend: number;
-    dxyTrend: number;
-    realYields: number;
-    hySpread: number;
-    vix: number;
+    dxyTrend: number;       // 0-33
+    netLiquidity: number;   // 0-33
+    stablecoinFlow: number; // 0-34
   };
   previousScore?: number;
   changedAt?: string;
   updatedAt: string;
 }
 
-// ─── Token / Crypto Layer ───
+// ─── Token / Crypto Layer (V2) ───
 
 export interface OHLCV {
   timestamp: string;
@@ -118,19 +102,18 @@ export interface TokenData {
   weeklyCandles: OHLCV[];
   dailyCandles: OHLCV[];
   sma30w?: number;
+  sma50w?: number;        // V2: for DIP_BUY support zone
   atr14?: number;
   rangeCompression?: number;
-  socialVolume?: number;
-  socialSentiment?: number;
+  rsi14?: number;         // V2: for DIP_BUY oversold detection
+  maSlope4w?: number;     // V2: for TREND_RIDE acceleration
+  maSlopePrev?: number;   // V2: prior slope for acceleration check
   fundingRate?: number;
-  openInterest?: number;
-  longShortRatio?: number;
-  exchangeNetflow?: number;
   status: DataStatus;
   fetchedAt: string;
 }
 
-// ─── State Machine ───
+// ─── State Machine (V2) ───
 
 export interface TokenStateRecord {
   tokenId: string;
@@ -144,7 +127,6 @@ export interface TokenStateRecord {
     rangeCompression: number;
     maFlatness: number;
     volPercentile: number;
-    socialQuiet: number;
     total: number;
     passing: boolean;
   };
@@ -157,9 +139,14 @@ export interface TokenStateRecord {
     allMet: boolean;
   };
 
+  // V2 flags that drove state selection (for display)
+  signals: {
+    trendRide: boolean;  // >30% above MA + slope accelerating
+    dipBuy: boolean;     // below MA but above 50W MA + oversold
+    extended: boolean;   // >30% above MA + slope flattening
+  };
+
   disqualifiers: {
-    extendedAboveMa: boolean;
-    socialSpike: boolean;
     alreadyPrinted: boolean;
     any: boolean;
   };
@@ -171,14 +158,10 @@ export interface TokenStateRecord {
   updatedAt: string;
 }
 
-// ─── Crypto Flows ───
+// ─── Crypto Flows (V2: only stablecoin delta kept) ───
 
 export interface CryptoFlows {
-  spotCexNetflow?: MacroDataPoint;
   stablecoinSupplyDelta?: MacroDataPoint;
-  btcEtfFlow?: MacroDataPoint;
-  ethEtfFlow?: MacroDataPoint;
-  exchangeReserves?: MacroDataPoint;
   status: DataStatus;
   fetchedAt: string;
 }

@@ -8,12 +8,13 @@ import {
   DataStatus,
 } from "./types";
 
-const TIMEOUT = 25_000;
-const COINGECKO_DELAY_MS = 7_000;
-
-// In-memory OHLCV cache (survives across requests in dev/long-lived serverless)
+// ─── OHLCV cache ──────────────────────────────────────────────────────
+// In-memory cache (4h TTL). Survives across requests in dev; in Vercel
+// serverless it survives within a warm lambda. Cold starts re-fetch.
 const ohlcvCache = new Map<string, { data: OHLCV[]; fetchedAt: number }>();
-const OHLCV_CACHE_TTL = 4 * 60 * 60 * 1000; // 4 hours
+const OHLCV_CACHE_TTL = 4 * 60 * 60 * 1000;
+
+// ─── Helpers ──────────────────────────────────────────────────────────
 
 function makePoint(
   id: string,
@@ -51,8 +52,9 @@ async function fetchJSON(url: string, signal?: AbortSignal) {
   return res.json();
 }
 
-// ─── FRED (St. Louis Fed) — free API ───
-
+// ─── FRED (St. Louis Fed) ─────────────────────────────────────────────
+// Try native fetch first (works on Vercel), fall back to curl (works
+// locally where Node's fetch has TLS issues with FRED).
 async function fetchFRED(
   seriesId: string
 ): Promise<{ value: number; prev: number } | null> {
@@ -60,7 +62,7 @@ async function fetchFRED(
   if (!apiKey) return null;
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}&api_key=${apiKey}&file_type=json&sort_order=desc&limit=2`;
 
-  function parseObs(data: any): { value: number; prev: number } | null {
+  function parse(data: any): { value: number; prev: number } | null {
     const obs = data?.observations;
     if (!obs || obs.length < 1) return null;
     const current = parseFloat(obs[0].value);
@@ -69,86 +71,64 @@ async function fetchFRED(
     return { value: current, prev: isNaN(prev) ? current : prev };
   }
 
-  // Try fetch first (works on Vercel), fall back to curl (works locally)
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
-    if (res.ok) return parseObs(await res.json());
+    if (res.ok) return parse(await res.json());
   } catch {}
 
   try {
     const { execSync } = require("child_process");
     const result = execSync(`curl -s "${url}"`, { timeout: 15_000 });
-    return parseObs(JSON.parse(result.toString()));
+    return parse(JSON.parse(result.toString()));
   } catch (e) {
     console.error(`[tracker/FRED] ${seriesId} failed:`, e);
     return null;
   }
 }
 
-// ─── Macro Data Fetcher ───
+// ─── Macro Data Fetcher (V2) ──────────────────────────────────────────
 
 export async function fetchMacroData(): Promise<MacroSnapshot> {
-  console.log("[tracker/data] Fetching macro data... FRED_API_KEY:", process.env.FRED_API_KEY ? "SET" : "NOT SET");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT);
-  const signal = controller.signal;
+  console.log("[tracker/data] Fetching macro (V2)...");
 
   const [
-    fredUs2y,
     fredUs10y,
     fredRealYield,
-    fredFedFunds,
     fredHySpread,
     fredBalSheet,
     fredRrp,
     fredTga,
     fxData,
-    vixProxy,
-    goldData,
+    stablecoinData,
+    btcDominance,
   ] = await Promise.allSettled([
-    fetchFRED("DGS2"),
     fetchFRED("DGS10"),
     fetchFRED("DFII10"),
-    fetchFRED("FEDFUNDS"),
     fetchFRED("BAMLH0A0HYM2"),
     fetchFRED("WALCL"),
     fetchFRED("RRPONTSYD"),
     fetchFRED("WTREGEN"),
-    fetchJSON("https://api.frankfurter.app/latest?from=USD&to=EUR,JPY,CNY,GBP", signal).catch(() => null),
-    fetchJSON("https://api.coingecko.com/api/v3/simple/price?ids=volatility-index-token&vs_currencies=usd&include_24hr_change=true", signal).catch(() => null),
-    fetchJSON("https://api.coingecko.com/api/v3/simple/price?ids=paxos-gold&vs_currencies=usd&include_24hr_change=true", signal).catch(() => null),
+    fetchJSON("https://api.frankfurter.app/latest?from=USD&to=EUR,JPY,GBP,CNY").catch(() => null),
+    fetchStablecoinDelta(),
+    fetchBtcDominance(),
   ]);
 
-  clearTimeout(timeout);
+  const unwrap = <T>(r: PromiseSettledResult<T>) => (r.status === "fulfilled" ? r.value : null);
 
-  const fred = (r: PromiseSettledResult<{ value: number; prev: number } | null>) =>
-    r.status === "fulfilled" ? r.value : null;
+  const us10yData = unwrap(fredUs10y);
+  const realYieldData = unwrap(fredRealYield);
+  const hyData = unwrap(fredHySpread);
+  const balSheetData = unwrap(fredBalSheet);
+  const rrpData = unwrap(fredRrp);
+  const tgaData = unwrap(fredTga);
+  const fx = unwrap(fxData);
+  const stableDelta = unwrap(stablecoinData);
+  const btcDom = unwrap(btcDominance);
 
-  const us2yData = fred(fredUs2y);
-  const us10yData = fred(fredUs10y);
-  const realYieldData = fred(fredRealYield);
-  const fedFundsData = fred(fredFedFunds);
-  const hyData = fred(fredHySpread);
-  const balSheetData = fred(fredBalSheet);
-  const rrpData = fred(fredRrp);
-  const tgaData = fred(fredTga);
-
-  const netLiqValue =
-    balSheetData && rrpData && tgaData
-      ? balSheetData.value - rrpData.value - tgaData.value
-      : 0;
-  const netLiqPrev =
-    balSheetData && rrpData && tgaData
-      ? balSheetData.prev - rrpData.prev - tgaData.prev
-      : 0;
-
-  // FX
-  const fx = fxData.status === "fulfilled" ? fxData.value : null;
-  const fxRates = fx?.rates ?? {};
-
-  // DXY proxy: weighted basket (EUR 57.6%, JPY 13.6%, GBP 11.9%, CNY ~10%)
-  let dxyValue = 100;
+  // DXY proxy from Frankfurter basket
+  const fxRates = (fx as any)?.rates ?? {};
+  let dxyValue = 0;
+  let dxyStatus: DataStatus = "DEGRADED";
   if (fxRates.EUR && fxRates.JPY && fxRates.GBP) {
     const eurUsd = 1 / fxRates.EUR;
     const usdJpy = fxRates.JPY;
@@ -159,88 +139,119 @@ export async function fetchMacroData(): Promise<MacroSnapshot> {
       Math.pow(usdJpy, 0.136) *
       Math.pow(gbpUsd, -0.119) *
       Math.pow(1 / (fxRates.CNY || 7.2), -0.1);
+    dxyStatus = "LIVE";
   }
 
-  // Gold
-  const goldResult = goldData.status === "fulfilled" ? goldData.value : null;
-  const goldPrice = goldResult?.["paxos-gold"]?.usd ?? 0;
+  // Net liquidity
+  const netLiqValue =
+    balSheetData && rrpData && tgaData
+      ? balSheetData.value - rrpData.value - tgaData.value
+      : 0;
+  const netLiqPrev =
+    balSheetData && rrpData && tgaData
+      ? balSheetData.prev - rrpData.prev - tgaData.prev
+      : 0;
+  const netLiqStatus: DataStatus =
+    balSheetData && rrpData && tgaData ? "LIVE" : "DEGRADED";
 
   const snapshot: MacroSnapshot = {
     fetchedAt: new Date().toISOString(),
 
-    rates: {
-      us2y: us2yData
-        ? makePoint("rates-us2y", "US 2Y Yield", us2yData.value, "%", "FRED", "LIVE", us2yData.prev)
-        : degraded("rates-us2y", "US 2Y Yield", "%", "FRED"),
-      us10y: us10yData
-        ? makePoint("rates-us10y", "US 10Y Yield", us10yData.value, "%", "FRED", "LIVE", us10yData.prev)
-        : degraded("rates-us10y", "US 10Y Yield", "%", "FRED"),
-      realYield: realYieldData
-        ? makePoint("rates-real", "10Y Real Yield", realYieldData.value, "%", "FRED", "LIVE", realYieldData.prev)
-        : degraded("rates-real", "10Y Real Yield", "%", "FRED"),
-      fedFundsRate: fedFundsData
-        ? makePoint("rates-fedfunds", "Fed Funds Rate", fedFundsData.value, "%", "FRED", "LIVE", fedFundsData.prev)
-        : degraded("rates-fedfunds", "Fed Funds Rate", "%", "FRED"),
-    },
+    // Regime-scored
+    dxy: makePoint("dxy", "DXY (proxy)", dxyValue, "index", "frankfurter", dxyStatus),
+    netLiquidity:
+      netLiqStatus === "LIVE"
+        ? makePoint("net-liq", "Net Liquidity", netLiqValue, "$M", "FRED (WALCL-RRP-TGA)", "LIVE", netLiqPrev)
+        : degraded("net-liq", "Net Liquidity", "$M", "FRED"),
+    stablecoinDelta:
+      stableDelta != null
+        ? makePoint(
+            "stable-delta",
+            "Stablecoin 24h Δ",
+            stableDelta.delta,
+            "$",
+            "defillama",
+            "LIVE",
+            0
+          )
+        : degraded("stable-delta", "Stablecoin 24h Δ", "$", "defillama"),
 
-    fx: {
-      dxy: makePoint("fx-dxy", "DXY (proxy)", dxyValue, "index", "calculated", fxRates.EUR ? "LIVE" : "DEGRADED"),
-      usdjpy: fxRates.JPY
-        ? makePoint("fx-usdjpy", "USD/JPY", fxRates.JPY, "JPY", "frankfurter")
-        : degraded("fx-usdjpy", "USD/JPY", "JPY", "frankfurter"),
-      usdcnh: fxRates.CNY
-        ? makePoint("fx-usdcnh", "USD/CNH", fxRates.CNY, "CNY", "frankfurter")
-        : degraded("fx-usdcnh", "USD/CNH", "CNY", "frankfurter"),
-      eurusd: fxRates.EUR
-        ? makePoint("fx-eurusd", "EUR/USD", 1 / fxRates.EUR, "EUR", "frankfurter")
-        : degraded("fx-eurusd", "EUR/USD", "EUR", "frankfurter"),
-    },
+    // Context-only
+    us10y: us10yData
+      ? makePoint("us10y", "US 10Y Yield", us10yData.value, "%", "FRED", "LIVE", us10yData.prev)
+      : undefined,
+    realYield: realYieldData
+      ? makePoint("real-yld", "10Y Real Yield", realYieldData.value, "%", "FRED", "LIVE", realYieldData.prev)
+      : undefined,
+    hySpread: hyData
+      ? makePoint("hy-spread", "HY Spread (OAS)", hyData.value, "%", "FRED", "LIVE", hyData.prev)
+      : undefined,
+    btcDominance:
+      btcDom != null
+        ? makePoint("btc-d", "BTC Dominance", btcDom.value, "%", "coingecko", "LIVE", btcDom.prev)
+        : undefined,
 
-    equities: {
-      spx: degraded("eq-spx", "S&P 500", "index", "unavailable"),
-      ndx: degraded("eq-ndx", "Nasdaq 100", "index", "unavailable"),
-      vix: degraded("eq-vix", "VIX", "index", "unavailable"),
-      move: degraded("eq-move", "MOVE", "index", "unavailable"),
-    },
+    fedBalanceSheet: balSheetData
+      ? makePoint("fed-bs", "Fed Balance Sheet", balSheetData.value, "$M", "FRED", "LIVE", balSheetData.prev)
+      : undefined,
+    rrp: rrpData
+      ? makePoint("rrp", "Reverse Repo", rrpData.value, "$M", "FRED", "LIVE", rrpData.prev)
+      : undefined,
+    tga: tgaData
+      ? makePoint("tga", "Treasury General Acct", tgaData.value, "$M", "FRED", "LIVE", tgaData.prev)
+      : undefined,
 
-    commodities: {
-      gold: goldPrice > 0
-        ? makePoint("cmd-gold", "Gold", goldPrice, "$/oz", "coingecko-paxg")
-        : degraded("cmd-gold", "Gold", "$/oz", "coingecko-paxg"),
-      wti: degraded("cmd-wti", "WTI Crude", "$/bbl", "unavailable"),
-      copper: degraded("cmd-copper", "Copper", "$/lb", "unavailable"),
-    },
-
-    credit: {
-      hySpread: hyData
-        ? makePoint("credit-hy", "HY Spread (OAS)", hyData.value, "bps", "FRED", "LIVE", hyData.prev)
-        : degraded("credit-hy", "HY Spread (OAS)", "bps", "FRED"),
-      igSpread: degraded("credit-ig", "IG Spread", "bps", "unavailable"),
-    },
-
-    liquidity: {
-      fedBalanceSheet: balSheetData
-        ? makePoint("liq-bs", "Fed Balance Sheet", balSheetData.value, "$M", "FRED", "LIVE", balSheetData.prev)
-        : degraded("liq-bs", "Fed Balance Sheet", "$M", "FRED"),
-      rrp: rrpData
-        ? makePoint("liq-rrp", "Reverse Repo (RRP)", rrpData.value, "$M", "FRED", "LIVE", rrpData.prev)
-        : degraded("liq-rrp", "Reverse Repo (RRP)", "$M", "FRED"),
-      tga: tgaData
-        ? makePoint("liq-tga", "Treasury General Account", tgaData.value, "$M", "FRED", "LIVE", tgaData.prev)
-        : degraded("liq-tga", "Treasury General Account", "$M", "FRED"),
-      netLiquidity:
-        balSheetData && rrpData && tgaData
-          ? makePoint("liq-net", "Net Liquidity", netLiqValue, "$M", "calculated", "LIVE", netLiqPrev)
-          : degraded("liq-net", "Net Liquidity", "$M", "calculated"),
-      globalM2: degraded("liq-m2", "Global M2", "$T", "unavailable"),
-    },
+    usdjpy: fxRates.JPY
+      ? makePoint("usdjpy", "USD/JPY", fxRates.JPY, "JPY", "frankfurter", "LIVE")
+      : undefined,
+    eurusd: fxRates.EUR
+      ? makePoint("eurusd", "EUR/USD", 1 / fxRates.EUR, "EUR", "frankfurter", "LIVE")
+      : undefined,
   };
 
-  console.log("[tracker/data] Macro data complete.");
+  console.log("[tracker/data] Macro V2 complete.");
   return snapshot;
 }
 
-// ─── Macro Calendar (static + known dates) ───
+// ─── Stablecoin supply delta (DeFiLlama) ──────────────────────────────
+
+async function fetchStablecoinDelta(): Promise<{ delta: number } | null> {
+  try {
+    const data = await fetchJSON(
+      "https://stablecoins.llama.fi/stablecoins?includePrices=true",
+      AbortSignal.timeout(12_000)
+    );
+    const assets = data?.peggedAssets ?? [];
+    let totalCurrent = 0;
+    let totalPrev = 0;
+    for (const coin of assets) {
+      totalCurrent += coin.circulating?.peggedUSD ?? 0;
+      totalPrev += coin.circulatingPrevDay?.peggedUSD ?? coin.circulating?.peggedUSD ?? 0;
+    }
+    if (totalCurrent === 0) return null;
+    return { delta: totalCurrent - totalPrev };
+  } catch {
+    return null;
+  }
+}
+
+// ─── BTC Dominance (CoinGecko /global) ────────────────────────────────
+
+async function fetchBtcDominance(): Promise<{ value: number; prev: number } | null> {
+  try {
+    const data = await fetchJSON(
+      "https://api.coingecko.com/api/v3/global",
+      AbortSignal.timeout(10_000)
+    );
+    const btcD = data?.data?.market_cap_percentage?.btc;
+    if (typeof btcD !== "number") return null;
+    return { value: btcD, prev: btcD }; // no delta available free tier
+  } catch {
+    return null;
+  }
+}
+
+// ─── Macro Calendar ───────────────────────────────────────────────────
 
 export function getMacroCalendar(): MacroEvent[] {
   const now = new Date();
@@ -257,248 +268,227 @@ export function getMacroCalendar(): MacroEvent[] {
   return events.filter((e) => new Date(e.date) >= now);
 }
 
-// ─── Token / Crypto Data ───
+// ─── Token OHLCV utilities ────────────────────────────────────────────
 
-export async function fetchTokenData(
-  tokenIds: string[]
-): Promise<TokenData[]> {
+function computeRSI(candles: OHLCV[], period = 14): number | undefined {
+  if (candles.length < period + 1) return undefined;
+  const closes = candles.slice(-(period + 1)).map((c) => c.close);
+  let gains = 0;
+  let losses = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (d >= 0) gains += d;
+    else losses -= d;
+  }
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+function buildWeeklyCandles(daily: OHLCV[]): OHLCV[] {
+  const weeks: OHLCV[][] = [];
+  let current: OHLCV[] = [];
+  for (const c of daily) {
+    const day = new Date(c.timestamp).getUTCDay();
+    if (day === 1 && current.length > 0) {
+      weeks.push(current);
+      current = [];
+    }
+    current.push(c);
+  }
+  if (current.length > 0) weeks.push(current);
+  return weeks.map((w) => ({
+    timestamp: w[0].timestamp,
+    open: w[0].open,
+    high: Math.max(...w.map((c) => c.high)),
+    low: Math.min(...w.map((c) => c.low)),
+    close: w[w.length - 1].close,
+    volume: w.reduce((s, c) => s + c.volume, 0),
+  }));
+}
+
+function computeDerivedIndicators(token: TokenData, raw: OHLCV[]) {
+  // Keep full daily history for 50W MA (up to 180 days provided by CoinGecko)
+  token.dailyCandles = raw.slice(-30);
+  token.weeklyCandles = buildWeeklyCandles(raw);
+
+  // 30W SMA
+  if (token.weeklyCandles.length >= 30) {
+    const last30 = token.weeklyCandles.slice(-30);
+    token.sma30w = last30.reduce((s, c) => s + c.close, 0) / 30;
+  } else if (token.weeklyCandles.length > 0) {
+    token.sma30w =
+      token.weeklyCandles.reduce((s, c) => s + c.close, 0) /
+      token.weeklyCandles.length;
+  }
+
+  // 50W SMA (uses whatever we have; CoinGecko free only gives 180 days ≈ 25 weeks)
+  if (token.weeklyCandles.length > 0) {
+    const lastN = token.weeklyCandles.slice(-Math.min(50, token.weeklyCandles.length));
+    token.sma50w = lastN.reduce((s, c) => s + c.close, 0) / lastN.length;
+  }
+
+  // 4-week MA slope (current and prior) for acceleration check
+  if (token.weeklyCandles.length >= 8) {
+    const recent = token.weeklyCandles.slice(-4);
+    const prior = token.weeklyCandles.slice(-8, -4);
+    const pct = (arr: OHLCV[]) => {
+      const a = arr[0].close;
+      const b = arr[arr.length - 1].close;
+      return a > 0 ? ((b - a) / a) * 100 : 0;
+    };
+    token.maSlope4w = pct(recent);
+    token.maSlopePrev = pct(prior);
+  }
+
+  // ATR(14) on daily
+  if (token.dailyCandles.length >= 15) {
+    const last15 = token.dailyCandles.slice(-15);
+    let atrSum = 0;
+    for (let i = 1; i < last15.length; i++) {
+      const tr = Math.max(
+        last15[i].high - last15[i].low,
+        Math.abs(last15[i].high - last15[i - 1].close),
+        Math.abs(last15[i].low - last15[i - 1].close)
+      );
+      atrSum += tr;
+    }
+    token.atr14 = atrSum / 14;
+  }
+
+  // Range compression on last 15 daily
+  if (token.dailyCandles.length >= 15) {
+    const last15 = token.dailyCandles.slice(-15);
+    const h = Math.max(...last15.map((c) => c.high));
+    const l = Math.min(...last15.map((c) => c.low));
+    const mid = (h + l) / 2;
+    token.rangeCompression = mid > 0 ? ((h - l) / mid) * 100 : 0;
+  }
+
+  // RSI(14) on daily
+  token.rsi14 = computeRSI(token.dailyCandles);
+}
+
+// ─── Token Data Fetcher (V2) ──────────────────────────────────────────
+
+export async function fetchTokenData(tokenIds: string[]): Promise<TokenData[]> {
   console.log(`[tracker/data] Fetching ${tokenIds.length} tokens...`);
-
   if (tokenIds.length === 0) return [];
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT);
-  const signal = controller.signal;
 
   const tokens: TokenData[] = [];
 
+  // Batch price fetch
   try {
-    const ids = tokenIds.join(",");
     const priceData = await fetchJSON(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true`,
-      signal
+      `https://api.coingecko.com/api/v3/simple/price?ids=${tokenIds.join(",")}&vs_currencies=usd&include_market_cap=true&include_24hr_vol=true&include_24hr_change=true`,
+      AbortSignal.timeout(15_000)
     );
-
     for (const id of tokenIds) {
       const d = priceData?.[id];
-      if (!d) {
-        tokens.push({
-          id,
-          symbol: id.toUpperCase(),
-          name: id,
-          price: 0,
-          marketCap: 0,
-          volume24h: 0,
-          weeklyCandles: [],
-          dailyCandles: [],
-          status: "UNAVAILABLE",
-          fetchedAt: new Date().toISOString(),
-        });
-        continue;
-      }
-
       tokens.push({
         id,
         symbol: id.toUpperCase(),
         name: id,
-        price: d.usd ?? 0,
-        marketCap: d.usd_market_cap ?? 0,
-        volume24h: d.usd_24h_vol ?? 0,
+        price: d?.usd ?? 0,
+        marketCap: d?.usd_market_cap ?? 0,
+        volume24h: d?.usd_24h_vol ?? 0,
         weeklyCandles: [],
         dailyCandles: [],
-        status: "LIVE",
+        status: d ? "LIVE" : "UNAVAILABLE",
         fetchedAt: new Date().toISOString(),
       });
     }
   } catch (e) {
-    console.error("[tracker/data] Token price fetch error:", e);
+    console.error("[tracker/data] Token price fetch failed:", e);
+    for (const id of tokenIds) {
+      tokens.push({
+        id,
+        symbol: id.toUpperCase(),
+        name: id,
+        price: 0,
+        marketCap: 0,
+        volume24h: 0,
+        weeklyCandles: [],
+        dailyCandles: [],
+        status: "UNAVAILABLE",
+        fetchedAt: new Date().toISOString(),
+      });
+    }
   }
 
-  clearTimeout(timeout);
-
-  // Fetch OHLCV sequentially with delay to avoid CoinGecko rate limits (~10 req/min free tier)
-  // Uses in-memory cache (4h TTL) to minimize API calls
+  // OHLCV — parallel pairs with 6s delay between batches
   const liveTokens = tokens.filter((t) => t.status === "LIVE");
-  let fetchCount = 0;
-  for (let i = 0; i < liveTokens.length; i++) {
-    const token = liveTokens[i];
+  const BATCH_SIZE = 2;
+  const BATCH_DELAY_MS = 6_000;
 
-    let rawCandles: OHLCV[] | null = null;
-    const cached = ohlcvCache.get(token.id);
-    if (cached && Date.now() - cached.fetchedAt < OHLCV_CACHE_TTL) {
-      rawCandles = cached.data;
-      console.log(`[tracker/data] OHLCV ${i + 1}/${liveTokens.length}: ${token.id} (cached)`);
-    } else {
-      if (fetchCount > 0) await new Promise((r) => setTimeout(r, COINGECKO_DELAY_MS));
-      try {
-        const data = await fetchJSON(
-          `https://api.coingecko.com/api/v3/coins/${token.id}/ohlc?vs_currency=usd&days=180`
-        );
-        fetchCount++;
-        if (Array.isArray(data)) {
-          rawCandles = data.map((d: number[]) => ({
-            timestamp: new Date(d[0]).toISOString(),
-            open: d[1],
-            high: d[2],
-            low: d[3],
-            close: d[4],
-            volume: 0,
-          }));
-          ohlcvCache.set(token.id, { data: rawCandles, fetchedAt: Date.now() });
-          console.log(`[tracker/data] OHLCV ${i + 1}/${liveTokens.length}: ${token.id} OK`);
+  for (let i = 0; i < liveTokens.length; i += BATCH_SIZE) {
+    const batch = liveTokens.slice(i, i + BATCH_SIZE);
+
+    if (i > 0) await new Promise((r) => setTimeout(r, BATCH_DELAY_MS));
+
+    await Promise.all(
+      batch.map(async (token) => {
+        const cached = ohlcvCache.get(token.id);
+        let raw: OHLCV[] | null = null;
+
+        if (cached && Date.now() - cached.fetchedAt < OHLCV_CACHE_TTL) {
+          raw = cached.data;
+          console.log(`[tracker/data] OHLCV ${token.id} (cached)`);
+        } else {
+          try {
+            const data = await fetchJSON(
+              `https://api.coingecko.com/api/v3/coins/${token.id}/ohlc?vs_currency=usd&days=180`,
+              AbortSignal.timeout(12_000)
+            );
+            if (Array.isArray(data)) {
+              raw = data.map((d: number[]) => ({
+                timestamp: new Date(d[0]).toISOString(),
+                open: d[1],
+                high: d[2],
+                low: d[3],
+                close: d[4],
+                volume: 0,
+              }));
+              ohlcvCache.set(token.id, { data: raw, fetchedAt: Date.now() });
+              console.log(`[tracker/data] OHLCV ${token.id} OK`);
+            }
+          } catch {
+            console.log(`[tracker/data] OHLCV ${token.id} failed`);
+          }
         }
-      } catch {
-        console.log(`[tracker/data] OHLCV ${i + 1}/${liveTokens.length}: ${token.id} failed`);
-      }
-    }
 
-    if (!rawCandles) continue;
-
-    token.dailyCandles = rawCandles.slice(-30);
-
-    const weeks: OHLCV[][] = [];
-    let currentWeek: OHLCV[] = [];
-    for (const c of rawCandles) {
-      const day = new Date(c.timestamp).getUTCDay();
-      if (day === 1 && currentWeek.length > 0) {
-        weeks.push(currentWeek);
-        currentWeek = [];
-      }
-      currentWeek.push(c);
-    }
-    if (currentWeek.length > 0) weeks.push(currentWeek);
-
-    token.weeklyCandles = weeks.map((w) => ({
-      timestamp: w[0].timestamp,
-      open: w[0].open,
-      high: Math.max(...w.map((c) => c.high)),
-      low: Math.min(...w.map((c) => c.low)),
-      close: w[w.length - 1].close,
-      volume: w.reduce((s, c) => s + c.volume, 0),
-    }));
-
-    if (token.weeklyCandles.length >= 30) {
-      const last30 = token.weeklyCandles.slice(-30);
-      token.sma30w = last30.reduce((s, c) => s + c.close, 0) / 30;
-    } else if (token.weeklyCandles.length > 0) {
-      token.sma30w =
-        token.weeklyCandles.reduce((s, c) => s + c.close, 0) /
-        token.weeklyCandles.length;
-    }
-
-    if (token.dailyCandles.length >= 15) {
-      const last15 = token.dailyCandles.slice(-15);
-      let atrSum = 0;
-      for (let i2 = 1; i2 < last15.length; i2++) {
-        const tr = Math.max(
-          last15[i2].high - last15[i2].low,
-          Math.abs(last15[i2].high - last15[i2 - 1].close),
-          Math.abs(last15[i2].low - last15[i2 - 1].close)
-        );
-        atrSum += tr;
-      }
-      token.atr14 = atrSum / 14;
-    }
-
-    if (token.dailyCandles.length >= 15) {
-      const last15 = token.dailyCandles.slice(-15);
-      const rangeHigh = Math.max(...last15.map((c) => c.high));
-      const rangeLow = Math.min(...last15.map((c) => c.low));
-      const mid = (rangeHigh + rangeLow) / 2;
-      token.rangeCompression = mid > 0 ? ((rangeHigh - rangeLow) / mid) * 100 : 0;
-    }
+        if (raw) computeDerivedIndicators(token, raw);
+      })
+    );
   }
 
   console.log(`[tracker/data] Token data complete: ${tokens.length} tokens.`);
   return tokens;
 }
 
-// ─── Crypto Flows ───
+// ─── Crypto Flows (V2: only stablecoin delta) ─────────────────────────
 
 export async function fetchCryptoFlows(): Promise<CryptoFlows> {
-  console.log("[tracker/data] Fetching crypto flows...");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT);
-  const signal = controller.signal;
-
-  const result: CryptoFlows = {
-    status: "DEGRADED",
-    fetchedAt: new Date().toISOString(),
-  };
-
-  try {
-    // Stablecoin supply delta from DeFiLlama
-    const stableData = await fetchJSON(
-      "https://stablecoins.llama.fi/stablecoins?includePrices=true",
-      signal
+  const result: CryptoFlows = { status: "DEGRADED", fetchedAt: new Date().toISOString() };
+  const delta = await fetchStablecoinDelta();
+  if (delta != null) {
+    result.stablecoinSupplyDelta = makePoint(
+      "flow-stable-delta",
+      "Stablecoin Supply Delta",
+      delta.delta,
+      "$",
+      "defillama",
+      "LIVE",
+      0
     );
-    const assets = stableData?.peggedAssets ?? [];
-
-    let totalCurrent = 0;
-    let totalPrev = 0;
-    for (const coin of assets) {
-      const current = coin.circulating?.peggedUSD ?? 0;
-      const prev = coin.circulatingPrevDay?.peggedUSD ?? current;
-      totalCurrent += current;
-      totalPrev += prev;
-    }
-
-    if (totalCurrent > 0) {
-      result.stablecoinSupplyDelta = makePoint(
-        "flow-stablecoin-delta",
-        "Stablecoin Supply Delta",
-        totalCurrent - totalPrev,
-        "$",
-        "defillama",
-        "LIVE",
-        0
-      );
-      result.status = "LIVE";
-    }
-  } catch {
-    console.log("[tracker/data] Stablecoin flow fetch failed");
+    result.status = "LIVE";
   }
-
-  clearTimeout(timeout);
-
-  // Nansen smart money netflows
-  try {
-    const { execSync } = require("child_process");
-    const nansenResult = execSync(
-      'nansen research smart-money netflow --chain ethereum --limit 10 --format csv 2>/dev/null',
-      { timeout: 15_000 }
-    ).toString();
-    const lines = nansenResult.trim().split("\n");
-    if (lines.length > 1) {
-      let totalNetflow24h = 0;
-      for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",");
-        const nf24h = parseFloat(cols[3]) || 0; // net_flow_24h_usd
-        totalNetflow24h += nf24h;
-      }
-      result.spotCexNetflow = makePoint(
-        "flow-smart-money-netflow",
-        "Smart Money Netflow (ETH)",
-        totalNetflow24h,
-        "$",
-        "nansen",
-        "LIVE"
-      );
-    }
-  } catch {
-    result.spotCexNetflow = degraded("flow-cex-netflow", "Spot CEX Netflow", "$", "nansen");
-  }
-
-  result.exchangeReserves = degraded("flow-exchange-reserves", "Exchange Reserves", "BTC", "glassnode");
-  result.btcEtfFlow = degraded("flow-btc-etf", "BTC ETF Flow", "$", "farside");
-  result.ethEtfFlow = degraded("flow-eth-etf", "ETH ETF Flow", "$", "farside");
-
-  console.log("[tracker/data] Crypto flows complete.");
   return result;
 }
 
-// ─── Default Watchlist ───
+// ─── Default Watchlist (V2: trimmed to 5) ─────────────────────────────
 
 export const DEFAULT_WATCHLIST = [
   "bitcoin",
@@ -506,9 +496,4 @@ export const DEFAULT_WATCHLIST = [
   "solana",
   "binancecoin",
   "ripple",
-  "avalanche-2",
-  "chainlink",
-  "sui",
-  "celestia",
-  "render-token",
 ];

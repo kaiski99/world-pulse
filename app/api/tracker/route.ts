@@ -11,7 +11,7 @@ import {
 } from "@/lib/tracker";
 import type { TrackerSnapshot, TokenStateRecord } from "@/lib/tracker/types";
 
-export const maxDuration = 120;
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
   try {

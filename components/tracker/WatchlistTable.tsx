@@ -12,6 +12,8 @@ const STATE_COLORS: Record<string, { bg: string; text: string }> = {
   QUIET: { bg: "bg-blue-500/10", text: "text-blue-400" },
   IMBALANCE_FORMING: { bg: "bg-yellow-500/10", text: "text-yellow-400" },
   IMBALANCE_CONFIRMED: { bg: "bg-green-500/10", text: "text-green-400" },
+  TREND_RIDE: { bg: "bg-purple-500/10", text: "text-purple-400" },
+  DIP_BUY: { bg: "bg-cyan-500/10", text: "text-cyan-400" },
   EXTENDED: { bg: "bg-orange-500/10", text: "text-orange-400" },
   INVALID: { bg: "bg-zinc-500/10", text: "text-zinc-500" },
 };
@@ -25,10 +27,12 @@ export default function WatchlistTable({ tokens, regimeLevel }: WatchlistTablePr
 
   const stateOrder: Record<string, number> = {
     IMBALANCE_CONFIRMED: 0,
-    IMBALANCE_FORMING: 1,
-    QUIET: 2,
-    EXTENDED: 3,
-    INVALID: 4,
+    TREND_RIDE: 1,
+    DIP_BUY: 2,
+    IMBALANCE_FORMING: 3,
+    QUIET: 4,
+    EXTENDED: 5,
+    INVALID: 6,
   };
 
   const sorted = [...tokens].sort((a, b) => {
@@ -93,9 +97,8 @@ export default function WatchlistTable({ tokens, regimeLevel }: WatchlistTablePr
               const colors = STATE_COLORS[t.state] ?? STATE_COLORS.INVALID;
               const expanded = expandedToken === t.tokenId;
               const disqualList: string[] = [];
-              if (t.disqualifiers.extendedAboveMa) disqualList.push("extended");
-              if (t.disqualifiers.socialSpike) disqualList.push("social");
               if (t.disqualifiers.alreadyPrinted) disqualList.push("printed");
+              if (t.signals?.extended) disqualList.push("extended");
 
               return (
                 <tr

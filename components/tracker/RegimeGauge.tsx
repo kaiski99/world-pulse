@@ -12,11 +12,9 @@ export default function RegimeGauge({ regime }: RegimeGaugeProps) {
   const angle = -90 + pct * 180;
 
   const bars = [
-    { label: "Net Liq", value: components.netLiquidityTrend, max: 20 },
-    { label: "DXY", value: components.dxyTrend, max: 20 },
-    { label: "Real Yld", value: components.realYields, max: 20 },
-    { label: "HY Sprd", value: components.hySpread, max: 20 },
-    { label: "VIX", value: components.vix, max: 20 },
+    { label: "DXY", value: components.dxyTrend, max: 33 },
+    { label: "Net Liq", value: components.netLiquidity, max: 33 },
+    { label: "Stable Flow", value: components.stablecoinFlow, max: 34 },
   ];
 
   return (
@@ -90,7 +88,7 @@ export default function RegimeGauge({ regime }: RegimeGaugeProps) {
             <div className="flex-1 h-1.5 bg-border-main rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all ${
-                  b.value >= 15 ? "bg-green-400" : b.value >= 10 ? "bg-yellow-400" : "bg-red-400"
+                  b.value / b.max >= 0.66 ? "bg-green-400" : b.value / b.max >= 0.33 ? "bg-yellow-400" : "bg-red-400"
                 }`}
                 style={{ width: `${(b.value / b.max) * 100}%` }}
               />
